@@ -14,6 +14,13 @@ export const FREQUENCIES = { weekly: 'Weekly', biweekly: 'Every 2 weeks', monthl
 
 export const KINDS = ['grocery', 'dining', 'coffee', 'fuel', 'transport', 'shopping', 'health', 'entertainment', 'fitness', 'home', 'pets', 'personal', 'travel', 'education', 'services'];
 export const THRESHOLDS = { cautious: 0.85, balanced: 0.7, eager: 0.55 };
+// Knobs of the suggestion model (exported so the simulation can tune them).
+export const TUNING = {
+  cap: 0.65,     // most confidence a built-in default can give a category before the user's own history says so
+  k0: 3,         // the default counts as this many past visits
+  unknown: 0.12, // chance mass kept for "somewhere we don't list"
+  margin: 0.15,  // top choice must lead the runner-up by this much to auto-file
+};
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const MONTH = /^\d{4}-\d{2}$/;
@@ -51,7 +58,7 @@ export const defaultState = () => ({
   transactions: [],
   recurring: [],
   goals: [],
-  learn: { merchants: {}, spots: [], stats: { auto: 0, fixed: 0 } },
+  learn: { merchants: {}, spots: [], stats: { auto: 0, fixed: 0, confirmed: 0 } },
 });
 
 const CODES = new Set(CURRENCIES.map(c => c[0]));
@@ -142,7 +149,7 @@ export function sanitize(raw) {
     .map(p => { const cats = cleanCats(p.cats); return { lat: +p.lat, lng: +p.lng, n: Object.values(cats).reduce((a, b) => a + b, 0), cats }; })
     .filter(p => p.n > 0);
   const lst = raw.learn?.stats;
-  s.learn.stats = { auto: Math.max(0, Math.round(num(lst?.auto))), fixed: Math.max(0, Math.round(num(lst?.fixed))) };
+  s.learn.stats = { auto: Math.max(0, Math.round(num(lst?.auto))), fixed: Math.max(0, Math.round(num(lst?.fixed))), confirmed: Math.max(0, Math.round(num(lst?.confirmed))) };
   return s;
 }
 export const migrate = sanitize;
@@ -292,7 +299,7 @@ export const MULTI = [
   [/7-eleven|7 eleven|circle k|wawa|sheetz|quiktrip|speedway|casey'?s/i, { fuel: 0.4, grocery: 0.35, coffee: 0.25 }],
 ];
 
-export const normName = s => String(s || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').replace(/ #?\d+$/, '').trim();
+export const normName = s => String(s || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/['’`]/g, '').replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').replace(/ #?\d+$/, '').trim();
 export const merchantKey = p => normName(p.brand || p.name);
 
 export function distanceM(lat1, lng1, lat2, lng2) {
@@ -339,10 +346,10 @@ function placeCategoryDist(s, cand, amount) {
     if (c) prior[c] = (prior[c] || 0) + w;
   }
   const m = s.learn.merchants[merchantKey(cand)];
-  const K0 = 3; // the built-in default counts as three past visits
+  const K0 = TUNING.k0;
   const out = {};
   const n = m?.n || 0;
-  for (const c of new Set([...Object.keys(prior), ...Object.keys(m?.cats || {})])) out[c] = (K0 * (prior[c] || 0) + (m?.cats[c] || 0)) / (K0 + n);
+  for (const c of new Set([...Object.keys(prior), ...Object.keys(m?.cats || {})])) out[c] = (K0 * Math.min(TUNING.cap, prior[c] || 0) + (m?.cats[c] || 0)) / (K0 + n);
   // At a store that sells everything, what you usually spend per category is a clue: $9 and $180 are different trips.
   if (amount > 0 && m?.lm && Object.keys(out).length > 1) {
     const f = {};
@@ -380,7 +387,7 @@ export function suggest(s, fix, index, amount = 0) {
     const m = s.learn.merchants[merchantKey(c)];
     return { ...c, key: merchantKey(c), w: Math.exp(-0.5 * (c.d / sigma) ** 2) * (WALK_IN[c.kind] ?? 1) * (1 + 0.4 * Math.log1p(m?.n || 0)) };
   }).sort((a, b) => b.w - a.w).slice(0, 8);
-  const UNKNOWN = 0.12; // always leave some chance that it's somewhere we don't list
+  const UNKNOWN = TUNING.unknown; // always leave some chance that it's somewhere we don't list
   const total = cands.reduce((a, c) => a + c.w, 0) + UNKNOWN;
   const dist = {};
   for (const c of cands) {
@@ -394,7 +401,8 @@ export function suggest(s, fix, index, amount = 0) {
     final = {};
     for (const c of new Set([...Object.keys(dist), ...Object.keys(spot.cats)])) final[c] = lam * ((spot.cats[c] || 0) / spot.n) + (1 - lam) * (dist[c] || 0);
   }
-  const ranked = Object.entries(final).filter(([, p]) => p > 0.02).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([catId, p]) => ({ catId, p }));
+  const known = new Set(s.categories.map(c => c.id));
+  const ranked = Object.entries(final).filter(([c, p]) => p > 0.02 && known.has(c)).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([catId, p]) => ({ catId, p }));
   const penalty = acc <= 50 ? 1 : acc <= 100 ? 0.9 : acc <= 200 ? 0.7 : 0.4;
   const conf = (ranked[0]?.p ?? 0) * penalty;
   const margin = (ranked[0]?.p ?? 0) - (ranked[1]?.p ?? 0);
@@ -403,11 +411,21 @@ export function suggest(s, fix, index, amount = 0) {
   return { ranked, conf, margin, place: cands[0] ?? null, cands: cands.slice(0, 3), acc, spot: spot ? { n: spot.n } : null };
 }
 
+// The user's setting, nudged up when they have been correcting too many automatic filings.
+export function threshold(level, stats) {
+  const base = THRESHOLDS[level] ?? THRESHOLDS.balanced;
+  const n = (stats?.fixed || 0) + (stats?.confirmed || 0);
+  if (n < 10) return base;
+  const rate = stats.fixed / n;
+  return Math.min(0.97, base + Math.min(0.2, Math.max(0, rate - 0.08) * 1.5));
+}
+export const correctionRate = stats => { const n = (stats?.fixed || 0) + (stats?.confirmed || 0); return n ? stats.fixed / n : 0; };
+
 // 'auto' only when the guess is confident, clearly ahead of the runner-up, and rests on a decent fix.
-export function decide(res, level, fix) {
+export function decide(res, level, fix, stats) {
   if (!fix || !res.ranked.length || !res.ranked[0].p) return 'review';
   if (fix.acc > 150 || (!res.place && !res.spot)) return 'review';
-  return res.conf >= (THRESHOLDS[level] ?? THRESHOLDS.balanced) && res.margin >= 0.15 ? 'auto' : 'review';
+  return res.conf >= threshold(level, stats) && res.margin >= TUNING.margin ? 'auto' : 'review';
 }
 
 // ---- learning ----
@@ -440,6 +458,7 @@ export function unlearnFiling(s, tx) {
   const sp = tx.loc && nearestSpot(s, tx.loc[0], tx.loc[1], SPOT_RADIUS);
   if (sp && sp.cats[tx.cat]) { sp.cats[tx.cat]--; sp.n--; if (!sp.cats[tx.cat]) delete sp.cats[tx.cat]; if (sp.n <= 0) s.learn.spots.splice(s.learn.spots.indexOf(sp), 1); }
 }
+export const autoUnconfirmed = (s, today, days = 14) => s.transactions.filter(t => t.auto && t.date >= addDays(today, -days)).sort((a, b) => b.date.localeCompare(a.date));
 export const reviewList = s => s.transactions.filter(t => t.status === 'review').sort((a, b) => b.date.localeCompare(a.date));
 
 // Replace one transaction with several, one per part. `parts` is [{amount}] and must add up to the total.

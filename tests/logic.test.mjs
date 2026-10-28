@@ -150,13 +150,15 @@ test('index finds places within a radius', () => {
   assert.equal(L.nearby(idx, here.lat, here.lng, 400).length, 2);
 });
 
-test('a lone nearby supermarket is auto-filed as Groceries', () => {
+test('a lone nearby supermarket is suggested at first sight but must earn auto-filing', () => {
   const s = state(), idx = L.buildIndex(pack([poi("Trader Joe's", 'grocery', 0.00004)]));
   const r = L.suggest(s, fix(), idx);
   assert.equal(r.ranked[0].catId, cat(s, 'Groceries'));
   assert.equal(r.place.name, "Trader Joe's");
-  assert.ok(r.conf >= 0.8, `conf ${r.conf}`);
-  assert.equal(L.decide(r, 'balanced', fix()), 'auto');
+  assert.equal(L.decide(r, 'balanced', fix()), 'review', 'defaults alone are not enough at the default setting');
+  assert.equal(L.decide(r, 'eager', fix()), 'auto');
+  for (let i = 0; i < 3; i++) L.learnFiling(s, { cat: cat(s, 'Groceries'), amount: 30 }, { key: 'trader joes', name: "Trader Joe's" }, null);
+  assert.equal(L.decide(L.suggest(s, fix(), idx), 'balanced', fix()), 'auto', 'three confirmed visits earn it');
 });
 
 test('dense area: two different shops in the same spot goes to review with both suggested', () => {
@@ -233,6 +235,8 @@ test('sanitize keeps review state and learned data, drops stale category ids', (
 test('merchant keys ignore branch numbers and accents', () => {
   assert.equal(L.merchantKey({ name: 'Café Roma #123' }), 'cafe roma');
   assert.equal(L.merchantKey({ name: 'Walmart Supercenter', brand: 'Walmart' }), 'walmart');
+  assert.equal(L.merchantKey({ name: "Trader Joe's" }), L.merchantKey({ name: 'Trader Joes' }));
+  assert.equal(L.merchantKey({ name: 'McDonald’s' }), 'mcdonalds');
 });
 
 test('typical amounts per category break ties at a store that sells everything', () => {
@@ -269,4 +273,38 @@ test('splitTx divides a purchase and rejects totals that do not add up', () => {
   assert.equal(r.length, 2);
   assert.equal(s.transactions[1].merchant, 'Walmart');
   assert.notEqual(s.transactions[0].id, s.transactions[1].id);
+});
+
+test('suggestions never reference a category that no longer exists', () => {
+  const s = state(), g = cat(s, 'Groceries');
+  for (let i = 0; i < 6; i++) L.learnFiling(s, { cat: g, amount: 20 }, { key: 'x', name: 'X' }, here);
+  s.categories = s.categories.filter(c => c.id !== g); // deleted without cleaning learned data
+  const idx = L.buildIndex(pack([poi('X', 'grocery', 0.00003)]));
+  const r = L.suggest(s, fix(), idx);
+  assert.ok(r.ranked.every(x => s.categories.some(c => c.id === x.catId)));
+});
+
+test('the threshold rises when the user keeps correcting automatic filings', () => {
+  assert.equal(L.threshold('balanced', { fixed: 0, confirmed: 5 }), 0.7); // too little data to judge
+  assert.equal(L.threshold('balanced', { fixed: 1, confirmed: 19 }), 0.7); // 5% corrected: fine
+  assert.ok(L.threshold('balanced', { fixed: 6, confirmed: 14 }) > 0.8); // 30% corrected: be much more careful
+  assert.ok(L.threshold('cautious', { fixed: 20, confirmed: 0 }) <= 0.97);
+  assert.equal(L.correctionRate({ fixed: 1, confirmed: 3 }), 0.25);
+  // and decide() uses it
+  const s = state(), idx = L.buildIndex(pack([poi('A', 'grocery', 0.00004)]));
+  for (let i = 0; i < 8; i++) L.learnFiling(s, { cat: cat(s, 'Groceries'), amount: 9 }, { key: 'a', name: 'A' }, null);
+  const r = L.suggest(s, fix(), idx);
+  assert.equal(L.decide(r, 'balanced', fix(), { fixed: 0, confirmed: 20 }), 'auto');
+  assert.equal(L.decide(r, 'balanced', fix(), { fixed: 10, confirmed: 10 }), 'review');
+});
+
+test('unconfirmed auto-filed list is recent and newest first', () => {
+  const s = state();
+  s.transactions = [
+    { id: 'a', type: 'expense', amount: 1, cat: cat(s, 'Fun'), note: '', date: '2026-10-27', auto: true },
+    { id: 'b', type: 'expense', amount: 1, cat: cat(s, 'Fun'), note: '', date: '2026-10-28', auto: true },
+    { id: 'c', type: 'expense', amount: 1, cat: cat(s, 'Fun'), note: '', date: '2026-09-01', auto: true },
+    { id: 'd', type: 'expense', amount: 1, cat: cat(s, 'Fun'), note: '', date: '2026-10-28' },
+  ];
+  assert.deepEqual(L.autoUnconfirmed(s, '2026-10-28').map(t => t.id), ['b', 'a']);
 });

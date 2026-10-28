@@ -16,10 +16,11 @@ A simple, private budgeting app. Set a monthly limit for each category, log what
 ## Smart capture
 
 1. **Amount:** the add sheet opens with the last amount pre-filled and selected, so you can just type over it.
-2. **Where you are:** Calibr reads GPS only while the add sheet is open (nothing is stored except places you file things at, and nothing leaves your device) and looks up nearby places in an offline *pack*.
+2. **Where you are:** Calibr reads GPS only while the add sheet is open and nothing leaves your device (the approximate spot of each purchase, about 10 m, is saved with it so Calibr can learn; Settings → Forget removes those) and looks up nearby places in an offline *pack*.
 3. **Decision:** it scores each possible category from distance, GPS accuracy, the kind of place, and what *you* did there before. It files automatically only if the score clears your threshold (Settings → Smart capture: Very sure / Fairly sure / Pretty sure), the top choice clearly beats the runner-up, and the GPS fix is decent. Otherwise the purchase waits in review with 2–3 suggestions.
 4. **Stores that sell everything** (Walmart, Target, Costco, drugstores, convenience stores) always start in review; once your history at that store is consistent they are filed automatically.
-5. **Safety net:** auto-filed entries are tagged, undoable, and counted (Settings shows how many you had to correct).
+5. **Earned trust:** a built-in guess from the places list alone is deliberately not enough at the default setting; a place is auto-filed after a few visits you confirmed. In simulation (`tools/simulate.mjs`, synthetic user, 15 m GPS noise, 3% inconsistent choices) this cut wrong auto-filings in dense Midtown Manhattan from ~12% to ~3%, and ~6% to ~5% in a suburb (mostly stores like Walmart whose category varies per visit). Real-world accuracy will differ; Calibr measures it on you (below).
+6. **Safety net:** auto-filed entries are tagged and undoable, and a "Check" card lets you confirm or fix them. Calibr counts your confirmations and corrections, and automatically raises its bar if you correct too many.
 
 ### Places packs
 

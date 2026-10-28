@@ -86,7 +86,8 @@ function startLocating(onChange) {
     geo.onChange?.();
     ensurePack(geo.fix).then(() => geo.onChange?.());
   }, err => {
-    geo.state = err.code === 1 ? 'denied' : 'unavailable';
+    if (err.code === 1) geo.state = 'denied';
+    else if (!geo.fix) geo.state = 'unavailable'; // a timeout after we already have a fix changes nothing
     geo.onChange?.();
   }, { enableHighAccuracy: true, maximumAge: 15000, timeout: 30000 });
 }
@@ -181,12 +182,13 @@ function captureHTML() {
       : `📍 Near <b>${near.map(c => esc(c.name)).join('</b> or <b>')}</b> <span class="mute">· ±${Math.round(fix.acc)} m</span>`;
   }
   else line = `📍 <span class="mute">±${Math.round(fix.acc)} m · ${packs.status === 'loading' ? 'loading places…' : packs.status === 'none' ? 'no places data for this area yet' : res.spot ? 'a spot you’ve been before' : 'no known place nearby'}</span>`;
-  const decision = L.decide(res, S.settings.level, fix);
+  const decision = L.decide(res, S.settings.level, fix, S.learn.stats);
   const top = res.ranked[0];
   let hint = '';
   if (cap.picked) hint = `<span class="good">✓ Will be filed under <b>${esc(catOf(cap.picked)?.name)}</b></span>`;
   else if (!S.categories.length) hint = '';
   else if (decision === 'auto') hint = `<span class="good">✓ Will be filed under <b>${esc(catOf(top.catId).name)}</b> automatically</span>`;
+  else if (fix && res.place && top && top.p >= 0.4 && res.margin >= 0.15 && (S.learn.merchants[res.place.key]?.n || 0) < 3) hint = `<span class="warn">New here? Tap <b>${esc(catOf(top.catId).name)}</b> if that's right. After a few visits Calibr will file it by itself.</span>`;
   else if (fix || geo.state === 'off' || geo.state === 'denied') hint = '<span class="warn">Not sure enough to file this by itself — tap a category, or save it and pick later.</span>';
   const chips = res.ranked.map(r => { const c = catOf(r.catId); return c ? `<button type="button" class="chipbtn ${cap.picked === c.id ? 'on' : ''}" data-act="pick" data-id="${c.id}">${c.emoji} ${esc(c.name)}${r.p >= 0.3 ? ` <span class="pct">${Math.round(r.p * 100)}%</span>` : ''}</button>` : ''; }).join('');
   return `<div class="capline">${line}</div>${chips ? `<div class="chips tight">${chips}</div>` : ''}${hint ? `<div class="small caphint">${hint}</div>` : ''}`;
@@ -237,10 +239,13 @@ function txSheet(tx, preset = {}) {
     if (editing) {
       change('Transaction updated', () => {
         const x = S.transactions.find(q => q.id === tx.id);
+        const was = x.cat, wasAuto = x.auto, hadStatus = x.status;
+        if (was && !hadStatus) L.unlearnFiling(S, x); // with the old amount, before it changes
         Object.assign(x, { type: t, amount, note, date });
-        if (t === 'income') { if (x.cat && !x.status) L.unlearnFiling(S, x); x.cat = null; delete x.status; delete x.sugg; delete x.auto; }
-        else if (chosen) { fileTx(x, chosen, false); S.settings.lastCat = chosen; }
-        else if (x.cat && !x.status) { L.unlearnFiling(S, x); x.cat = null; delete x.auto; }
+        x.cat = null;
+        if (t === 'income') { delete x.status; delete x.sugg; delete x.auto; }
+        else if (chosen) { fileTx(x, chosen, false); S.settings.lastCat = chosen; if (wasAuto && was) S.learn.stats[was === chosen ? 'confirmed' : 'fixed']++; }
+        else if (!hadStatus) delete x.auto;
       });
       return;
     }
@@ -258,7 +263,7 @@ function txSheet(tx, preset = {}) {
     let msg;
     if (t === 'income') { msg = `Added ${money(amount)} income`; }
     else if (chosen) { msg = `Added ${money(amount)} to ${catOf(chosen).name}`; }
-    else if (L.decide(res, S.settings.level, fix) === 'auto') { base.__auto = res.ranked[0].catId; msg = `Filed ${money(amount)} under ${catOf(base.__auto).name}${place ? ' · ' + place.name : ''}`; }
+    else if (L.decide(res, S.settings.level, fix, S.learn.stats) === 'auto') { base.__auto = res.ranked[0].catId; msg = `Filed ${money(amount)} under ${catOf(base.__auto).name}${place ? ' · ' + place.name : ''}`; }
     else { base.status = 'review'; base.sugg = res.ranked.slice(0, 3).map(r => r.catId); msg = `Saved ${money(amount)} — it needs a category`; }
     change(msg, () => {
       const auto = base.__auto; delete base.__auto;
@@ -358,6 +363,24 @@ function reviewChange(msg, fn) {
   reviewSheet(msg);
 }
 
+// ---- auto-filed check ----
+function autoSheet(note) {
+  const list = L.autoUnconfirmed(S, L.todayStr());
+  const undoBar = note ? `<div class="undobar"><span>${esc(note)}</span>${rvUndo ? '<button type="button" class="link" data-act="rvundo2">Undo</button>' : ''}</div>` : '';
+  if (!list.length) { openSheet(`<h3>All checked 👍</h3>${undoBar}<p class="mute">Thanks. Calibr learns from every one you confirm or fix.</p><div class="actions"><button class="btn primary" value="cancel" formnovalidate>Done</button></div>`); return; }
+  openSheet(`<h3>Filed automatically</h3>${undoBar}
+    <p class="mute small" style="margin:0 0 6px">Was Calibr right? Confirm, or tap Change. If it keeps getting things wrong it will ask you more often.</p>
+    ${list.slice(0, 12).map(t => { const c = catOf(t.cat); return `<div class="rv"><div class="row"><span class="grow"><b>${money(t.amount)}</b> <span class="mute">${esc(t.merchant || t.note || 'Purchase')} · ${prettyDate(t.date)}</span><div>${c ? `${c.emoji} ${esc(c.name)}` : ''}</div></span>
+      <button type="button" class="chipbtn ghost" data-act="rvother" data-id="${t.id}">Change</button> <button type="button" class="chipbtn on" data-act="confirm" data-id="${t.id}">✓ Right</button></div></div>`; }).join('')}
+    <div class="actions"><button class="btn" value="cancel" formnovalidate>Close</button>${list.length > 1 ? '<button class="btn primary" type="button" data-act="confirmall">All look right</button>' : ''}</div>`);
+}
+function autoChange(msg, fn) {
+  const before = JSON.stringify(S);
+  fn(); save(); render();
+  rvUndo = () => { S = L.sanitize(JSON.parse(before)); save(); render(); };
+  autoSheet(msg);
+}
+
 // ---- category sheets ----
 function catSheet(cat) {
   const editing = !!cat;
@@ -376,6 +399,7 @@ function catSheet(cat) {
         S.categories = S.categories.filter(c => c.id !== cat.id);
         S.transactions.forEach(t => { if (t.cat === cat.id) t.cat = null; });
         S.recurring.forEach(r => { if (r.cat === cat.id) r.cat = null; });
+        S = L.sanitize(JSON.parse(JSON.stringify(S))); // drops the deleted category from learned data and suggestions
       });
       return;
     }
@@ -546,11 +570,14 @@ const views = {
       : `<button class="link small" data-act="tab" data-tab="settings">Set your monthly income →</button><span></span>`;
     const upcoming = cur ? L.upcoming(S, today, 14) : [];
     const nReview = L.reviewList(S).length;
+    const nAuto = L.autoUnconfirmed(S, today).length;
+    const autoCard = nAuto ? `<button class="card autocard" data-act="autoreview"><span class="emoji">📍</span><span class="grow">${plural(nAuto, 'purchase')} filed automatically<br><span class="small mute">Glance over ${nAuto === 1 ? 'it' : 'them'} so Calibr learns what it got right</span></span><span class="link">Check ›</span></button>` : '';
     const banner = nReview ? `<button class="card banner" data-act="review"><span class="emoji">📥</span><span class="grow"><b>${plural(nReview, 'purchase')} need${nReview === 1 ? 's' : ''} a category</b><br><span class="small mute">One tap each to file them</span></span><span class="link">Review ›</span></button>` : '';
     return `${banner}<section class="card hero"><div class="label">Left this month</div>
       <div class="big ${B.left < 0 ? 'over' : ''}">${money(B.left)}</div>${bar(pct)}
       <div class="sub"><span>${money(B.spent)} spent</span><span>of ${money(B.budget)}</span></div>
       <div class="sub">${incomeLine}</div>${hint ? `<div class="hint">${hint}</div>` : ''}</section>
+      ${autoCard}
       ${upcoming.length ? `<h2>Coming up</h2><ul class="list">${upcoming.map(r => {
         const d = L.daysBetween(today, r.next);
         return `<li><button class="rowbtn" data-act="rec" data-id="${r.id}"><div class="row"><span class="emoji">${r.type === 'income' ? '💵' : catOf(r.cat)?.emoji ?? '🔁'}</span><span class="grow"><div class="title">${esc(r.note)}</div><div class="small mute">${d === 1 ? 'Tomorrow' : `In ${plural(d, 'day')}`}</div></span><span class="amt ${r.type === 'income' ? 'inc' : ''}">${r.type === 'income' ? '+' : ''}${money(r.amount)}</span></div></button></li>`;
@@ -633,9 +660,10 @@ const views = {
         <div class="setrow"><span>Places data</span><span class="mute small" style="text-align:right;max-width:60%">${placesStatus()}</span></div>
         ${packBuilderUrl() ? `<div class="setrow"><span>Add places for my area</span><a class="link" href="${packBuilderUrl()}" target="_blank" rel="noopener">Open ›</a></div>` : ''}
         <div class="setrow"><span>Learned so far</span><span class="mute small">${plural(Object.keys(S.learn.merchants).length, 'place')} · ${plural(S.learn.spots.length, 'spot')}</span></div>
-        ${S.learn.stats.auto ? `<div class="setrow"><span>Auto-filed so far</span><span class="mute small">${S.learn.stats.auto} · corrected ${S.learn.stats.fixed} (${Math.round((S.learn.stats.fixed / S.learn.stats.auto) * 100)}%)</span></div>` : ''}
+        ${S.learn.stats.auto ? `<div class="setrow"><span>Auto-filed so far</span><span class="mute small" style="text-align:right">${S.learn.stats.auto} · ${S.learn.stats.confirmed} confirmed · ${S.learn.stats.fixed} fixed${S.learn.stats.fixed + S.learn.stats.confirmed >= 10 ? ` (${Math.round(L.correctionRate(S.learn.stats) * 100)}% wrong)` : ''}</span></div>` : ''}
+        ${L.threshold(st.level, S.learn.stats) > L.THRESHOLDS[st.level] + 0.01 ? '<div class="setrow"><span class="warn small">Extra careful for now, because you have corrected a lot of automatic filings.</span></div>' : ''}
         <div class="setrow"><span>Forget what Calibr learned</span><button class="link over" data-act="forget">Forget…</button></div></div>
-      <p class="mute small" style="margin:8px 4px 0">Anything Calibr isn't sure about goes to a review list instead of being filed. "Very sure" sends more there; "Pretty sure" sends fewer. Your location is only read while the add screen is open and is never uploaded.</p>
+      <p class="mute small" style="margin:8px 4px 0">Anything Calibr isn't sure about goes to a review list instead of being filed. "Very sure" sends more there; "Pretty sure" sends fewer. Your location is only read while the add screen is open and never leaves this device. The approximate spot (about 10 m) of each purchase is saved with it so Calibr can learn; "Forget" removes that.</p>
       <h2>Recurring &amp; bills <button class="link" data-act="addrec">+ Add</button></h2>
       ${S.recurring.length ? `<ul class="list">${S.recurring.map(r => `<li><button class="rowbtn" data-act="rec" data-id="${r.id}"><div class="row"><span class="emoji">${r.type === 'income' ? '💵' : catOf(r.cat)?.emoji ?? '🔁'}</span><span class="grow"><div class="title">${esc(r.note)}</div><div class="small mute">${L.FREQUENCIES[r.freq]} · next ${prettyDate(r.next)}</div></span><span class="amt ${r.type === 'income' ? 'inc' : ''}">${r.type === 'income' ? '+' : ''}${money(r.amount)}</span></div></button></li>`).join('')}</ul>`
         : `<div class="card empty" style="margin:0"><p>Rent, subscriptions, paychecks — add them once and Calibr logs them for you.</p></div>`}
@@ -662,7 +690,7 @@ function txList() {
   let txs = L.monthTx(S, ui.month).filter(t =>
     (ui.type === 'all' || t.type === ui.type || (ui.type === 'review' && t.status === 'review') || (ui.type === 'auto' && t.auto)) &&
     (ui.cat === 'all' || (ui.cat === 'none' ? t.type === 'expense' && !catOf(t.cat) : t.cat === ui.cat)) &&
-    (!q || t.note.toLowerCase().includes(q) || (catOf(t.cat)?.name.toLowerCase().includes(q))));
+    (!q || [t.note, t.merchant, ...(t.near || []), catOf(t.cat)?.name].some(x => x && x.toLowerCase().includes(q))));
   if (!txs.length) return `<div class="card empty"><span class="big">🧾</span>${L.monthTx(S, ui.month).length ? 'No transactions match.' : '<b>No transactions this month</b><p>Tap + to add your first one.</p>'}</div>`;
   txs = txs.slice().sort((a, b) => b.date.localeCompare(a.date));
   const groups = new Map();
@@ -683,6 +711,7 @@ function render() {
   $('month').textContent = monthLabel(ui.month);
   $('fab').hidden = !['budget', 'activity', 'insights'].includes(ui.tab);
   document.querySelectorAll('#nav button').forEach(b => { b.classList.toggle('on', b.dataset.tab === ui.tab); b.setAttribute('aria-current', b.dataset.tab === ui.tab ? 'page' : 'false'); });
+  document.querySelector('#nav [data-tab=budget]').dataset.badge = L.reviewList(S).length || '';
   $('view').innerHTML = views[ui.tab]();
   applyTheme();
 }
@@ -725,10 +754,14 @@ const actions = {
   rvother: el => { const t = S.transactions.find(x => x.id === el.dataset.id); if (t) { closeSheet(); txSheet(t); } },
   split: el => { const t = S.transactions.find(x => x.id === el.dataset.id); if (t) { closeSheet(); splitSheet(t); } },
   addsplit: () => $('splitrows').insertAdjacentHTML('beforeend', splitRow(S.categories[0].id)),
+  autoreview: () => autoSheet(),
+  confirm: el => { const t = S.transactions.find(x => x.id === el.dataset.id); if (t) autoChange('Confirmed', () => { delete t.auto; S.learn.stats.confirmed++; }); },
+  confirmall: () => { const list = L.autoUnconfirmed(S, L.todayStr()).slice(0, 12); autoChange(`Confirmed ${list.length}`, () => list.forEach(t => { delete t.auto; S.learn.stats.confirmed++; })); },
+  rvundo2: () => { const u = rvUndo; rvUndo = null; u?.(); autoSheet('Undone'); },
   rvundo: () => { const u = rvUndo; rvUndo = null; u?.(); reviewSheet('Undone'); },
   forget: () => {
-    if (!confirm('Forget every place and spot Calibr has learned? Your transactions are not affected.')) return;
-    change('Learning reset', () => { S.learn = { merchants: {}, spots: [], stats: S.learn.stats }; });
+    if (!confirm('Forget every place Calibr has learned, and remove the approximate location saved with each purchase? Your purchases and their categories are kept.')) return;
+    change('Learning reset', () => { S.learn = { merchants: {}, spots: [], stats: S.learn.stats }; S.transactions.forEach(t => { delete t.loc; delete t.mkey; }); });
   },
   emoji: el => { el.closest('form').elements.emoji.value = el.dataset.e; },
   setdate: el => { const i = el.closest('.datepick').querySelector('input[type=date]'); i.value = L.addDays(L.todayStr(), +el.dataset.d); i.dispatchEvent(new Event('change', { bubbles: true })); },

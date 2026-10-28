@@ -23,7 +23,7 @@ A simple, private budgeting app. Set a monthly limit for each category, log what
 
 ### Places packs
 
-Packs are compact offline files of nearby shops/restaurants (built from [Overture Maps](https://overturemaps.org), CDLA-Permissive-2.0). Without a pack Calibr still works: it learns the places you visit and asks you the first few times.
+Packs are compact offline files of nearby shops/restaurants (built from [Overture Maps](https://overturemaps.org); its sources are licensed CDLA-Permissive-2.0, Apache-2.0 or CC0-1.0, and the attribution is kept in each pack and shown in Settings). Without a pack Calibr still works: it learns the places you visit and asks you the first few times.
 
 Build one for your area from your phone: GitHub repo → **Actions** → **Build places pack** → **Run workflow**, enter a name (`austin`) and place (`Austin, Texas`). It commits the pack and redeploys the site. Or locally:
 

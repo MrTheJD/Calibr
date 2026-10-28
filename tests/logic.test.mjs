@@ -234,3 +234,39 @@ test('merchant keys ignore branch numbers and accents', () => {
   assert.equal(L.merchantKey({ name: 'Café Roma #123' }), 'cafe roma');
   assert.equal(L.merchantKey({ name: 'Walmart Supercenter', brand: 'Walmart' }), 'walmart');
 });
+
+test('typical amounts per category break ties at a store that sells everything', () => {
+  const s = state(), idx = L.buildIndex(pack([poi('Target', 'shopping', 0.00003, 'Target')]));
+  const g = cat(s, 'Groceries'), sh = cat(s, 'Shopping');
+  // Past visits: groceries ~ $60, shopping ~ $15
+  for (const a of [55, 62, 58, 66, 60, 57]) L.learnFiling(s, { cat: g, amount: a }, { key: 'target', name: 'Target' }, null);
+  for (const a of [14, 16, 15, 13]) L.learnFiling(s, { cat: sh, amount: a }, { key: 'target', name: 'Target' }, null);
+  const big = L.suggest(s, fix(), idx, 60), small = L.suggest(s, fix(), idx, 14), none = L.suggest(s, fix(), idx, 0);
+  assert.equal(big.ranked[0].catId, g);
+  assert.equal(small.ranked[0].catId, sh);
+  assert.ok(big.ranked[0].p > none.ranked.find(r => r.catId === g).p, 'amount raises the likely category');
+  assert.ok(Math.abs(big.ranked.reduce((a, r) => a + r.p, 0) - none.ranked.reduce((a, r) => a + r.p, 0)) < 0.2, 'probability mass is conserved');
+});
+
+test('unlearn also removes amount stats', () => {
+  const s = state(), g = cat(s, 'Groceries');
+  const tx = { cat: g, amount: 40, mkey: 'x' };
+  L.learnFiling(s, tx, { key: 'x', name: 'X' }, null);
+  L.learnFiling(s, { cat: g, amount: 40 }, { key: 'x', name: 'X' }, null);
+  L.unlearnFiling(s, tx);
+  assert.equal(s.learn.merchants.x.lm[g][0], 1);
+});
+
+test('splitTx divides a purchase and rejects totals that do not add up', () => {
+  const s = state(), g = cat(s, 'Groceries'), sh = cat(s, 'Shopping');
+  const tx = { id: 't1', type: 'expense', amount: 100, cat: null, note: 'n', date: '2026-10-01', merchant: 'Walmart', mkey: 'walmart' };
+  s.transactions = [tx];
+  assert.equal(L.splitTx(s, tx, [{ amount: 60 }, { amount: 30 }]), false);
+  assert.equal(s.transactions.length, 1);
+  const r = L.splitTx(s, tx, [{ amount: 60.1 }, { amount: 39.9 }]);
+  assert.equal(s.transactions.length, 2);
+  assert.deepEqual(s.transactions.map(t => t.amount), [60.1, 39.9]);
+  assert.equal(r.length, 2);
+  assert.equal(s.transactions[1].merchant, 'Walmart');
+  assert.notEqual(s.transactions[0].id, s.transactions[1].id);
+});

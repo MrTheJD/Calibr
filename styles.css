@@ -141,3 +141,6 @@ input.amount{-moz-appearance:textfield;appearance:textfield}
 .chipbtn .pct{display:inline;padding:0;border:0;background:none;margin-left:2px}
 
 .del{background:none;border:0;color:var(--mute);font-size:1rem;padding:6px 10px;border-radius:8px}
+
+.splitrow{display:grid;grid-template-columns:1fr 120px;gap:8px;margin-bottom:8px}
+.splitrow select,.splitrow input{margin:0}

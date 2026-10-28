@@ -9,7 +9,8 @@
 Writes packs/<name>.json and updates packs/index.json. Only places where people spend money are kept
 (shops, food, fuel, health, entertainment...), not offices or government buildings.
 
-Overture places data is published under CDLA-Permissive-2.0; keep the attribution in the pack.
+Overture places data is a mix of permissively licensed sources (CDLA-Permissive-2.0, Apache-2.0, CC0-1.0);
+keep the attribution in the pack.
 """
 import argparse, json, math, os, re, sys, urllib.parse, urllib.request
 from datetime import date
@@ -161,7 +162,7 @@ def main():
         places.append([round(lat_ * 1e5), round(lng_ * 1e5), name, KINDS.index(kind), (brand or '')[:40] if brand and brand != name else ''])
     places.sort(key=lambda p: (p[0], p[1]))
     pack = {'v': 1, 'name': a.name, 'label': label, 'bbox': bbox, 'built': date.today().isoformat(), 'release': rel,
-            'attribution': 'Places © Overture Maps Foundation, CDLA-Permissive-2.0', 'kinds': KINDS, 'places': places}
+            'attribution': 'Places data © Overture Maps Foundation and its sources (CDLA-Permissive-2.0, Apache-2.0, CC0-1.0)', 'kinds': KINDS, 'places': places}
 
     os.makedirs(a.out, exist_ok=True)
     path = os.path.join(a.out, a.name + '.json')

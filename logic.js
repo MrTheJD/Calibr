@@ -46,7 +46,7 @@ export const daysLeftInMonth = today => daysInMonth(monthOf(today)) - Number(tod
 // ---- state ----
 export const defaultState = () => ({
   v: 2,
-  settings: { currency: 'USD', income: 0, theme: 'auto', onboarded: false, lastCat: null, level: 'balanced', locate: true, lastAmount: 0 },
+  settings: { currency: 'USD', income: 0, theme: 'auto', onboarded: false, lastCat: null, level: 'balanced', locate: true, lastAmount: 0, quickOpen: false },
   categories: [],
   transactions: [],
   recurring: [],
@@ -76,6 +76,7 @@ export function sanitize(raw) {
     level: st.level in THRESHOLDS ? st.level : 'balanced',
     locate: st.locate !== false,
     lastAmount: Math.max(0, round2(num(st.lastAmount))),
+    quickOpen: !!st.quickOpen,
   };
 
   s.categories = (Array.isArray(raw.categories) ? raw.categories : [])
@@ -130,7 +131,11 @@ export function sanitize(raw) {
   const lm = raw.learn?.merchants && typeof raw.learn.merchants === 'object' ? raw.learn.merchants : {};
   for (const [k, m] of Object.entries(lm).slice(0, 3000)) {
     const cats = cleanCats(m?.cats), n = Object.values(cats).reduce((a, b) => a + b, 0);
-    if (n > 0) s.learn.merchants[k.slice(0, 80)] = { name: str(m.name).slice(0, 80), n, cats, amt: Math.max(0, round2(num(m.amt))) };
+    if (n > 0) {
+      const lm = {};
+      for (const [c, v] of Object.entries(m.lm && typeof m.lm === 'object' ? m.lm : {})) if (cats[c] && Array.isArray(v) && Number.isFinite(+v[0]) && Number.isFinite(+v[1]) && +v[0] > 0) lm[c] = [Math.round(+v[0]), +v[1]];
+      s.learn.merchants[k.slice(0, 80)] = { name: str(m.name).slice(0, 80), n, cats, amt: Math.max(0, round2(num(m.amt))), lm };
+    }
   }
   s.learn.spots = (Array.isArray(raw.learn?.spots) ? raw.learn.spots : []).slice(0, 400)
     .filter(p => p && Number.isFinite(+p.lat) && Number.isFinite(+p.lng))
@@ -326,7 +331,7 @@ export const packCovers = (entry, lat, lng, marginDeg = 0.01) =>
   lng >= entry.bbox[0] - marginDeg && lat >= entry.bbox[1] - marginDeg && lng <= entry.bbox[2] + marginDeg && lat <= entry.bbox[3] + marginDeg;
 
 // Categories for a place, blending built-in defaults with what this user has done there.
-function placeCategoryDist(s, cand) {
+function placeCategoryDist(s, cand, amount) {
   const weights = MULTI.find(([re]) => re.test(cand.brand || cand.name))?.[1] ?? { [cand.kind]: 1 };
   const prior = {};
   for (const [kind, w] of Object.entries(weights)) {
@@ -338,6 +343,17 @@ function placeCategoryDist(s, cand) {
   const out = {};
   const n = m?.n || 0;
   for (const c of new Set([...Object.keys(prior), ...Object.keys(m?.cats || {})])) out[c] = (K0 * (prior[c] || 0) + (m?.cats[c] || 0)) / (K0 + n);
+  // At a store that sells everything, what you usually spend per category is a clue: $9 and $180 are different trips.
+  if (amount > 0 && m?.lm && Object.keys(out).length > 1) {
+    const f = {};
+    for (const c of Object.keys(out)) {
+      const [k, sum] = m.lm[c] || [0, 0];
+      f[c] = k >= 3 ? 0.35 + 0.65 * Math.exp(-0.5 * ((Math.log(amount) - sum / k) / 0.9) ** 2) : 1;
+    }
+    const before = Object.values(out).reduce((a, b) => a + b, 0);
+    const after = Object.keys(out).reduce((a, c) => a + out[c] * f[c], 0);
+    if (after > 0) for (const c of Object.keys(out)) out[c] = (out[c] * f[c] * before) / after;
+  }
   return out;
 }
 
@@ -355,7 +371,7 @@ function habitual(s) {
 }
 
 // fix: { lat, lng, acc } | null. Returns ranked category guesses and an honest confidence.
-export function suggest(s, fix, index) {
+export function suggest(s, fix, index, amount = 0) {
   const none = { ranked: habitual(s), conf: 0, margin: 0, place: null, cands: [], acc: fix?.acc ?? null, spot: null };
   if (!fix || !s.categories.length) return none;
   const acc = Math.min(500, Math.max(5, fix.acc || 50)), sigma = Math.max(acc, 20);
@@ -369,7 +385,7 @@ export function suggest(s, fix, index) {
   const dist = {};
   for (const c of cands) {
     c.p = c.w / total;
-    for (const [cat, p] of Object.entries(placeCategoryDist(s, c))) dist[cat] = (dist[cat] || 0) + c.p * p;
+    for (const [cat, p] of Object.entries(placeCategoryDist(s, c, amount))) dist[cat] = (dist[cat] || 0) + c.p * p;
   }
   const spot = nearestSpot(s, fix.lat, fix.lng, Math.max(30, acc));
   let final = dist;
@@ -399,8 +415,9 @@ const SPOT_RADIUS = 30;
 export function learnFiling(s, tx, place, fix) {
   if (!tx.cat) return;
   if (place?.key) {
-    const m = s.learn.merchants[place.key] ??= { name: place.name, n: 0, cats: {}, amt: 0 };
+    const m = s.learn.merchants[place.key] ??= { name: place.name, n: 0, cats: {}, amt: 0, lm: {} };
     m.n++; m.cats[tx.cat] = (m.cats[tx.cat] || 0) + 1; m.amt = tx.amount;
+    if (tx.amount > 0) { const v = (m.lm ??= {})[tx.cat] ??= [0, 0]; v[0]++; v[1] += Math.log(tx.amount); }
   }
   if (fix) {
     const sp = nearestSpot(s, fix.lat, fix.lng, SPOT_RADIUS);
@@ -414,8 +431,28 @@ export function learnFiling(s, tx, place, fix) {
 export function unlearnFiling(s, tx) {
   if (!tx.cat) return;
   const m = tx.mkey && s.learn.merchants[tx.mkey];
-  if (m && m.cats[tx.cat]) { m.cats[tx.cat]--; m.n--; if (!m.cats[tx.cat]) delete m.cats[tx.cat]; if (m.n <= 0) delete s.learn.merchants[tx.mkey]; }
+  if (m && m.cats[tx.cat]) {
+    m.cats[tx.cat]--; m.n--; if (!m.cats[tx.cat]) delete m.cats[tx.cat];
+    const v = m.lm?.[tx.cat];
+    if (v) { v[0]--; v[1] -= Math.log(tx.amount || 1); if (v[0] <= 0) delete m.lm[tx.cat]; }
+    if (m.n <= 0) delete s.learn.merchants[tx.mkey];
+  }
   const sp = tx.loc && nearestSpot(s, tx.loc[0], tx.loc[1], SPOT_RADIUS);
   if (sp && sp.cats[tx.cat]) { sp.cats[tx.cat]--; sp.n--; if (!sp.cats[tx.cat]) delete sp.cats[tx.cat]; if (sp.n <= 0) s.learn.spots.splice(s.learn.spots.indexOf(sp), 1); }
 }
 export const reviewList = s => s.transactions.filter(t => t.status === 'review').sort((a, b) => b.date.localeCompare(a.date));
+
+// Replace one transaction with several, one per part. `parts` is [{amount}] and must add up to the total.
+// Returns the resulting transactions in order (the first is the original), or false.
+export function splitTx(s, tx, parts) {
+  const total = round2(parts.reduce((a, p) => a + p.amount, 0));
+  const i = s.transactions.findIndex(t => t.id === tx.id);
+  if (i < 0 || parts.length < 2 || parts.some(p => !(p.amount > 0)) || total !== round2(tx.amount)) return false;
+  const base = { ...tx };
+  delete base.rec; delete base.auto; delete base.status; delete base.sugg;
+  base.cat = null;
+  const clones = parts.slice(1).map(p => ({ ...base, id: uid(), amount: round2(p.amount) }));
+  tx.amount = round2(parts[0].amount);
+  s.transactions.splice(i + 1, 0, ...clones);
+  return [tx, ...clones];
+}

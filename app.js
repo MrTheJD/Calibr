@@ -166,7 +166,8 @@ const dateField = (value, name = 'date', label = 'Date') => `<div class="field">
 // ---- transaction sheet ----
 const cap = { picked: null, res: null };
 function captureHTML() {
-  const res = cap.res = L.suggest(S, geo.fix, packs.index);
+  cap.amount = parseFloat(document.querySelector('#sheet [name=amount]')?.value) || 0;
+  const res = cap.res = L.suggest(S, geo.fix, packs.index, cap.amount);
   const fix = geo.fix;
   let line;
   if (geo.state === 'off') line = '📍 Location is off. <button type="button" class="link" data-act="enableloc">Turn on</button>';
@@ -221,6 +222,7 @@ function txSheet(tx, preset = {}) {
         <input id="f-note" name="note" type="text" maxlength="80" list="notes" autocomplete="off" placeholder="What was it for?" value="${esc(tx?.note)}">
         <datalist id="notes">${recent.map(n => `<option value="${esc(n)}">`).join('')}</datalist></div>
       ${dateField(date)}
+      ${editing && tx.type === 'expense' ? `<button type="button" class="link" data-act="split" data-id="${tx.id}">Split across categories…</button>` : ''}
     </details>
     <div class="actions">${editing ? '<button class="btn danger spacer" value="delete" formnovalidate>Delete</button>' : '<button class="btn" value="cancel" formnovalidate>Cancel</button>'}
       <button class="btn primary" value="save">${editing ? 'Save' : 'Add'}</button></div>`,
@@ -244,7 +246,8 @@ function txSheet(tx, preset = {}) {
     }
 
     // New transaction: decide whether it can be filed by itself.
-    const res = cap.res, fix = geo.fix && t === 'expense' ? geo.fix : null;
+    const fix = geo.fix && t === 'expense' ? geo.fix : null;
+    const res = L.suggest(S, geo.fix, packs.index, amount); // recompute with the final amount
     const place = res?.place && res.place.p >= 0.35 ? { key: res.place.key, name: res.place.name } : null;
     const base = { id: L.uid(), type: t, amount, cat: null, note, date };
     if (t === 'expense' && fix && fix.acc <= 150) {
@@ -271,7 +274,8 @@ function txSheet(tx, preset = {}) {
     form.addEventListener('change', e => { if (e.target.name === 'type') toggle(); if (e.target.name === 'cat') { cap.picked = e.target.value || null; if ($('capture')) refreshCapture(); } });
     toggle();
     const amt = form.elements.amount;
-    amt.addEventListener('input', () => { amt.dataset.touched = '1'; });
+    let tm;
+    amt.addEventListener('input', () => { amt.dataset.touched = '1'; if ($('capture')) { clearTimeout(tm); tm = setTimeout(refreshCapture, 200); } });
     if (!editing) {
       startLocating(refreshCapture);
       refreshCapture();
@@ -284,6 +288,47 @@ function txSheet(tx, preset = {}) {
       const m = key && S.transactions.slice().reverse().find(t => t.type === 'expense' && t.cat && t.note.toLowerCase() === key);
       if (m) { const r = form.querySelector(`input[name=cat][value="${m.cat}"]`); if (r) { r.checked = true; cap.picked = m.cat; refreshCapture(); } }
     });
+  });
+}
+
+// ---- split ----
+let splitRow = () => '';
+function splitSheet(tx) {
+  if (!S.categories.length) return;
+  const opts = sel => S.categories.map(c => `<option value="${c.id}" ${c.id === sel ? 'selected' : ''}>${c.emoji} ${esc(c.name)}</option>`).join('');
+  splitRow = sel => `<div class="splitrow"><select name="sc" aria-label="Category">${opts(sel)}</select><input name="sa" type="number" inputmode="decimal" step="any" min="0.01" placeholder="0.00" aria-label="Amount"></div>`;
+  const first = catOf(tx.cat) ? tx.cat : tx.sugg?.find(catOf) ?? S.categories[0].id;
+  const second = tx.sugg?.find(id => id !== first && catOf(id)) ?? S.categories.find(c => c.id !== first)?.id ?? first;
+  openSheet(`<h3>Split ${money(tx.amount)}</h3>
+    <p class="mute small" style="margin:0 0 8px">Divide this purchase across categories, e.g. groceries and household at the same store.</p>
+    <div id="splitrows">${splitRow(first)}${splitRow(second)}</div>
+    <button type="button" class="addrow" data-act="addsplit">+ Add another</button>
+    <div id="remain" class="small" style="margin:10px 2px"></div>
+    <div class="actions"><button class="btn" value="cancel" formnovalidate>Cancel</button><button class="btn primary" value="save">Split</button></div>`,
+  (v, fd) => {
+    const cs = fd.getAll('sc'), rows = fd.getAll('sa').map((a, i) => ({ cat: cs[i], amount: L.round2(parseFloat(a) || 0) })).filter(r => r.amount > 0);
+    const sum = L.round2(rows.reduce((a, r) => a + r.amount, 0));
+    if (rows.length < 2 || sum !== L.round2(tx.amount)) { $('remain').innerHTML = `<span class="over">${rows.length < 2 ? 'Enter amounts for at least two categories.' : `The parts add up to ${money(sum)}, not ${money(tx.amount)}.`}</span>`; return false; }
+    change(`Split into ${rows.length} categories`, () => {
+      const x = S.transactions.find(t => t.id === tx.id);
+      if (x.cat && !x.status) L.unlearnFiling(S, x);
+      x.cat = null; delete x.status; delete x.sugg; delete x.auto;
+      L.splitTx(S, x, rows).forEach((t, i) => fileTx(t, rows[i].cat, false));
+    });
+  },
+  form => {
+    const update = e => {
+      const inputs = [...form.querySelectorAll('[name=sa]')];
+      if (e?.target.name === 'sa' && e.target === inputs[0] && inputs.length === 2 && !inputs[1].dataset.touched) {
+        const rest = L.round2(tx.amount - (parseFloat(inputs[0].value) || 0));
+        inputs[1].value = rest > 0 ? rest : '';
+      } else if (e?.target.name === 'sa') e.target.dataset.touched = '1';
+      const sum = L.round2(inputs.reduce((a, i) => a + (parseFloat(i.value) || 0), 0)), diff = L.round2(tx.amount - sum);
+      $('remain').innerHTML = diff === 0 ? '<span class="good">✓ Adds up</span>' : diff > 0 ? `${money(diff)} left to assign` : `<span class="over">${money(-diff)} over</span>`;
+    };
+    form.addEventListener('input', update);
+    update();
+    setTimeout(() => form.querySelector('[name=sa]').focus(), 50);
   });
 }
 
@@ -302,7 +347,8 @@ function reviewSheet(note) {
     ${list.map(t => `<div class="rv"><div class="row"><span class="grow"><b>${money(t.amount)}</b> <span class="mute">${esc(t.merchant || t.note || (t.near ? 'near ' + t.near.join(' or ') : 'Expense'))} · ${prettyDate(t.date)}</span></span>
       <button type="button" class="del" data-act="rvdel" data-id="${t.id}" aria-label="Delete">✕</button></div>
       <div class="chips tight">${(t.sugg?.length ? t.sugg : fallback).map(id => catOf(id)).filter(Boolean).map(c => `<button type="button" class="chipbtn" data-act="resolve" data-id="${t.id}" data-cat="${c.id}">${c.emoji} ${esc(c.name)}</button>`).join('')}
-      <button type="button" class="chipbtn ghost" data-act="rvother" data-id="${t.id}">Other…</button></div></div>`).join('')}
+      <button type="button" class="chipbtn ghost" data-act="rvother" data-id="${t.id}">Other…</button>
+      <button type="button" class="chipbtn ghost" data-act="split" data-id="${t.id}">Split…</button></div></div>`).join('')}
     <div class="actions"><button class="btn primary" value="cancel" formnovalidate>Done</button></div>`);
 }
 function reviewChange(msg, fn) {
@@ -466,6 +512,11 @@ function onboardSheet() {
 sheet.addEventListener('close', () => { if (!S.settings.onboarded && sheet.querySelector('[name=cats]')) { S.settings.onboarded = true; save(); render(); } });
 
 // ---------- views ----------
+// Where to run the "Build places pack" workflow, when the app is served from GitHub Pages.
+function packBuilderUrl() {
+  const m = location.hostname.match(/^([^.]+)\.github\.io$/), repo = location.pathname.split('/')[1];
+  return m && repo ? `https://github.com/${m[1]}/${repo}/actions/workflows/build-pack.yml` : '';
+}
 function placesStatus() {
   if (packs.entry) return `${esc(packs.entry.label)} · ${packs.entry.places.toLocaleString()} places`;
   if (!packs.list) { loadPackList().then(() => ui.tab === 'settings' && render()); return 'Checking…'; }
@@ -577,8 +628,10 @@ const views = {
         <div class="setrow"><label for="s-theme">Appearance</label><select id="s-theme" data-bind="theme">${['auto', 'light', 'dark'].map(t => `<option value="${t}" ${st.theme === t ? 'selected' : ''}>${t[0].toUpperCase() + t.slice(1)}</option>`).join('')}</select></div></div>
       <h2>Smart capture</h2><div class="list">
         <div class="setrow"><label for="s-loc">Use location to suggest categories</label><input id="s-loc" data-bind="locate" type="checkbox" ${st.locate ? 'checked' : ''} style="width:22px;height:22px;accent-color:var(--brand)"></div>
+        <div class="setrow"><label for="s-quick">Open straight to Add</label><input id="s-quick" data-bind="quickOpen" type="checkbox" ${st.quickOpen ? 'checked' : ''} style="width:22px;height:22px;accent-color:var(--brand)"></div>
         <div class="setrow"><label for="s-level">Auto-file when</label><select id="s-level" data-bind="level"><option value="cautious" ${st.level === 'cautious' ? 'selected' : ''}>Very sure</option><option value="balanced" ${st.level === 'balanced' ? 'selected' : ''}>Fairly sure</option><option value="eager" ${st.level === 'eager' ? 'selected' : ''}>Pretty sure</option></select></div>
         <div class="setrow"><span>Places data</span><span class="mute small" style="text-align:right;max-width:60%">${placesStatus()}</span></div>
+        ${packBuilderUrl() ? `<div class="setrow"><span>Add places for my area</span><a class="link" href="${packBuilderUrl()}" target="_blank" rel="noopener">Open ›</a></div>` : ''}
         <div class="setrow"><span>Learned so far</span><span class="mute small">${plural(Object.keys(S.learn.merchants).length, 'place')} · ${plural(S.learn.spots.length, 'spot')}</span></div>
         ${S.learn.stats.auto ? `<div class="setrow"><span>Auto-filed so far</span><span class="mute small">${S.learn.stats.auto} · corrected ${S.learn.stats.fixed} (${Math.round((S.learn.stats.fixed / S.learn.stats.auto) * 100)}%)</span></div>` : ''}
         <div class="setrow"><span>Forget what Calibr learned</span><button class="link over" data-act="forget">Forget…</button></div></div>
@@ -592,7 +645,8 @@ const views = {
         <div class="setrow"><span>Restore from backup</span><button class="link" data-act="import">Choose file</button></div>
         <div class="setrow"><span>Erase everything</span><button class="link over" data-act="reset">Erase…</button></div></div>
       <input id="file" type="file" accept="application/json,.json" hidden>
-      <p class="mute small" style="margin:16px 4px">Calibr ${VERSION}. Your data lives only in this browser on this device — nothing is uploaded. Export a backup now and then, especially before clearing browser data or switching phones.</p>`;
+      <p class="mute small" style="margin:16px 4px">Calibr ${VERSION}. Your data lives only in this browser on this device — nothing is uploaded. Export a backup now and then, especially before clearing browser data or switching phones.</p>
+      ${packs.entry ? '<p class="mute small" style="margin:8px 4px">Places data © Overture Maps Foundation and its sources (CDLA-Permissive-2.0, Apache-2.0, CC0-1.0).</p>' : ''}`;
   },
 };
 
@@ -669,6 +723,8 @@ const actions = {
   },
   rvdel: el => { const t = S.transactions.find(x => x.id === el.dataset.id); if (t) reviewChange('Deleted', () => { S.transactions = S.transactions.filter(x => x.id !== t.id); }); },
   rvother: el => { const t = S.transactions.find(x => x.id === el.dataset.id); if (t) { closeSheet(); txSheet(t); } },
+  split: el => { const t = S.transactions.find(x => x.id === el.dataset.id); if (t) { closeSheet(); splitSheet(t); } },
+  addsplit: () => $('splitrows').insertAdjacentHTML('beforeend', splitRow(S.categories[0].id)),
   rvundo: () => { const u = rvUndo; rvUndo = null; u?.(); reviewSheet('Undone'); },
   forget: () => {
     if (!confirm('Forget every place and spot Calibr has learned? Your transactions are not affected.')) return;
@@ -706,6 +762,7 @@ document.addEventListener('change', ev => {
   if (bind === 'income') { S.settings.income = Math.max(0, L.round2(parseFloat(t.value) || 0)); save(); toast('Income saved'); }
   else if (bind === 'currency') { S.settings.currency = t.value; save(); render(); }
   else if (bind === 'locate') { S.settings.locate = t.checked; save(); }
+  else if (bind === 'quickOpen') { S.settings.quickOpen = t.checked; save(); }
   else if (bind === 'level') { S.settings.level = t.value; save(); }
   else if (bind === 'theme') { S.settings.theme = t.value; save(); applyTheme(); }
   else if (t.id === 'ftype') { ui.type = t.value; $('txlist').innerHTML = txList(); }
@@ -739,7 +796,7 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) refr
 refresh();
 render();
 if (!S.settings.onboarded) onboardSheet();
-else if (new URLSearchParams(location.search).has('add')) txSheet(null);
+else if (S.settings.quickOpen || new URLSearchParams(location.search).has('add')) txSheet(null);
 if (location.search) history.replaceState(null, '', location.pathname);
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 navigator.storage?.persist?.().catch(() => {});

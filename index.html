@@ -4,66 +4,39 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Calibr</title>
+<meta name="description" content="A simple, private budgeting app. Your data stays on your device.">
 <meta name="theme-color" content="#0f766e">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Calibr">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="icon" href="icon.svg">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-<header>
-  <button id="prev" aria-label="Previous month">‹</button>
-  <h1 id="month"></h1>
-  <button id="next" aria-label="Next month">›</button>
+<header id="top">
+  <button data-act="prev" aria-label="Previous month">‹</button>
+  <button id="month" data-act="thisMonth" aria-label="Jump to this month"></button>
+  <button data-act="next" aria-label="Next month">›</button>
 </header>
 
-<main>
-  <section class="card summary">
-    <div class="left-label">Left this month</div>
-    <div class="left-amount" id="left"></div>
-    <div class="bar"><div id="total-bar"></div></div>
-    <div class="sub"><span id="spent"></span><span id="budget"></span></div>
-  </section>
+<main id="view"></main>
 
-  <section>
-    <h2>Categories <button class="link" id="edit-cats">Edit</button></h2>
-    <ul id="cats" class="list"></ul>
-  </section>
+<button id="fab" data-act="add" aria-label="Add transaction">+</button>
 
-  <section>
-    <h2>Recent</h2>
-    <ul id="txns" class="list"></ul>
-  </section>
-</main>
+<nav id="nav" aria-label="Main">
+  <button data-act="tab" data-tab="budget"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 3v9h9"/></svg>Budget</button>
+  <button data-act="tab" data-tab="activity"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg>Activity</button>
+  <button data-act="tab" data-tab="insights"><svg viewBox="0 0 24 24"><path d="M5 20V10M12 20V4M19 20v-7"/></svg>Insights</button>
+  <button data-act="tab" data-tab="goals"><svg viewBox="0 0 24 24"><path d="M6 21V4M6 4h11l-2 4 2 4H6"/></svg>Goals</button>
+  <button data-act="tab" data-tab="settings"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg>Settings</button>
+</nav>
 
-<button id="add" class="fab" aria-label="Add expense">+</button>
+<dialog id="sheet"></dialog>
+<div id="toast" role="status" aria-live="polite" hidden></div>
 
-<dialog id="expense-dialog">
-  <form method="dialog" id="expense-form">
-    <h3>Add expense</h3>
-    <input id="e-amount" type="number" inputmode="decimal" step="0.01" min="0.01" placeholder="0.00" required>
-    <select id="e-cat" required></select>
-    <input id="e-note" type="text" placeholder="Note (optional)" maxlength="60">
-    <input id="e-date" type="date" required>
-    <div class="actions">
-      <button value="cancel" formnovalidate>Cancel</button>
-      <button value="save" class="primary">Save</button>
-    </div>
-  </form>
-</dialog>
-
-<dialog id="cats-dialog">
-  <form method="dialog" id="cats-form">
-    <h3>Monthly limits</h3>
-    <div id="cat-rows"></div>
-    <button type="button" id="add-cat">+ Add category</button>
-    <div class="actions">
-      <button type="button" id="export">Export</button>
-      <button value="cancel" formnovalidate>Cancel</button>
-      <button value="save" class="primary">Save</button>
-    </div>
-  </form>
-</dialog>
-
-<script src="app.js"></script>
+<script type="module" src="app.js"></script>
 </body>
 </html>

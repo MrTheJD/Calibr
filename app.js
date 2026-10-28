@@ -1,6 +1,6 @@
 import * as L from './logic.js';
 
-const KEY = 'calibr.v2', OLD = 'calibr.v1', VERSION = '1.1.0';
+const KEY = 'calibr.v2', OLD = 'calibr.v1', VERSION = '1.2.0';
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
@@ -71,24 +71,84 @@ function change(msg, fn) {
   toast(msg, () => { S = L.sanitize(JSON.parse(before)); save(); render(); });
 }
 
+// ---------- location & places ----------
+const geo = { fix: null, state: 'idle', watch: null, onChange: null };
+function startLocating(onChange) {
+  stopLocating();
+  geo.onChange = onChange; geo.fix = null;
+  if (!S.settings.locate) { geo.state = 'off'; return; }
+  if (!navigator.geolocation) { geo.state = 'unavailable'; return; }
+  geo.state = 'locating';
+  geo.watch = navigator.geolocation.watchPosition(pos => {
+    const f = { lat: pos.coords.latitude, lng: pos.coords.longitude, acc: pos.coords.accuracy, t: Date.now() };
+    if (!geo.fix || f.acc <= geo.fix.acc * 1.2 || f.t - geo.fix.t > 20000) geo.fix = f; // keep the best recent fix
+    geo.state = 'ok';
+    geo.onChange?.();
+    ensurePack(geo.fix).then(() => geo.onChange?.());
+  }, err => {
+    geo.state = err.code === 1 ? 'denied' : 'unavailable';
+    geo.onChange?.();
+  }, { enableHighAccuracy: true, maximumAge: 15000, timeout: 30000 });
+}
+function stopLocating() {
+  if (geo.watch != null) navigator.geolocation.clearWatch(geo.watch);
+  geo.watch = null; geo.onChange = null;
+}
+
+// Offline place packs (see tools/build_pack.py). Fetched once per area, then cached by the service worker.
+const packs = { list: null, index: null, entry: null, status: 'idle', pending: null };
+async function loadPackList() {
+  if (packs.list) return packs.list;
+  try { packs.list = (await (await fetch('packs/index.json')).json()).packs || []; } catch { packs.list = []; }
+  return packs.list;
+}
+async function ensurePack(fix) {
+  const entry = (await loadPackList()).find(e => L.packCovers(e, fix.lat, fix.lng));
+  if (!entry) { packs.entry = packs.index = null; packs.status = 'none'; return; }
+  if (packs.entry?.name === entry.name && packs.index) return;
+  if (packs.pending?.name === entry.name) return packs.pending.promise;
+  packs.status = 'loading';
+  const promise = fetch('packs/' + entry.file).then(r => r.json()).then(p => { packs.index = L.buildIndex(p); packs.entry = entry; packs.status = 'ready'; })
+    .catch(() => { packs.status = 'error'; }).finally(() => { packs.pending = null; });
+  packs.pending = { name: entry.name, promise };
+  return promise;
+}
+
+// A transaction's remembered place/location, for learning.
+const placeOf = t => (t.mkey ? { key: t.mkey, name: t.merchant } : null);
+const fixOf = t => (t.loc ? { lat: t.loc[0], lng: t.loc[1] } : null);
+// File a transaction under a category and let Calibr learn from it.
+function fileTx(t, cat, auto) {
+  const was = t.cat, wasAuto = t.auto;
+  if (t.cat && !t.status) L.unlearnFiling(S, t);
+  t.cat = cat; delete t.status; delete t.sugg;
+  if (auto) t.auto = true; else delete t.auto;
+  L.learnFiling(S, t, placeOf(t), fixOf(t));
+  if (auto) S.learn.stats.auto++;
+  if (wasAuto && was && was !== cat) S.learn.stats.fixed++; // an automatic filing the user had to correct
+}
+
 // ---------- sheets ----------
 const sheet = $('sheet');
 function openSheet(html, onSubmit, onMount, primary = 'save') {
   // Hidden first submit button: pressing Enter submits the primary action, not whichever button comes first.
-  sheet.innerHTML = `<form method="dialog"><button class="vh" value="${primary}" tabindex="-1" aria-hidden="true"></button>${html}</form>`;
+  sheet.innerHTML = `<form method="dialog"><button class="vh" value="${primary}" tabindex="-1" aria-hidden="true"></button><button class="sheetx" value="cancel" formnovalidate aria-label="Close">✕</button>${html}</form>`;
   const form = sheet.firstElementChild;
   form.onsubmit = ev => {
     const v = ev.submitter?.value;
     if (!v || v === 'cancel') return;
     if (onSubmit(v, new FormData(form), form) === false) ev.preventDefault();
   };
+  $('toast').hidden = true;
   if (!sheet.open) sheet.showModal();
   onMount?.(form);
   return form;
 }
+sheet.addEventListener('close', () => { if (!sheet.open) stopLocating(); }); // `open` is true again if another sheet replaced this one
 sheet.addEventListener('click', ev => { if (ev.target === sheet) sheet.close(); });
 const closeSheet = () => sheet.open && sheet.close();
 
+const KIND_LABEL = { grocery: 'Grocery stores', dining: 'Restaurants & bars', coffee: 'Coffee shops', fuel: 'Gas stations', transport: 'Parking & transit', shopping: 'Shops & retail', health: 'Health & pharmacy', entertainment: 'Entertainment', fitness: 'Gyms & fitness', home: 'Home & hardware', pets: 'Pets', personal: 'Salons & personal care', travel: 'Hotels & travel', education: 'Schools & education', services: 'Other services' };
 const emojiPicker = () => `<div class="emojis" role="group" aria-label="Pick an icon">${EMOJI.map(e => `<button type="button" data-act="emoji" data-e="${e}" aria-label="${e}">${e}</button>`).join('')}</div>`;
 
 const catChips = (selected, name = 'cat') => `<div class="chips" role="radiogroup" aria-label="Category">${S.categories.map(c =>
@@ -104,52 +164,152 @@ const dateField = (value, name = 'date', label = 'Date') => `<div class="field">
   <button type="button" class="btn" data-act="setdate" data-d="0">Today</button><button type="button" class="btn" data-act="setdate" data-d="-1">Yesterday</button></div></div>`;
 
 // ---- transaction sheet ----
+const cap = { picked: null, res: null };
+function captureHTML() {
+  const res = cap.res = L.suggest(S, geo.fix, packs.index);
+  const fix = geo.fix;
+  let line;
+  if (geo.state === 'off') line = '📍 Location is off. <button type="button" class="link" data-act="enableloc">Turn on</button>';
+  else if (geo.state === 'denied') line = '📍 Location is blocked. Allow it in your browser settings to get suggestions.';
+  else if (geo.state === 'unavailable') line = '📍 Couldn’t get your location.';
+  else if (!fix) line = '📍 Finding your location…';
+  else if (res.cands.some(c => c.p >= 0.15)) {
+    const near = res.cands.filter(c => c.p >= 0.15).slice(0, 2);
+    line = near.length === 1 && near[0].p >= 0.35
+      ? `📍 <b>${esc(near[0].name)}</b> <span class="mute">· ${Math.round(near[0].d)} m away · ±${Math.round(fix.acc)} m</span>`
+      : `📍 Near <b>${near.map(c => esc(c.name)).join('</b> or <b>')}</b> <span class="mute">· ±${Math.round(fix.acc)} m</span>`;
+  }
+  else line = `📍 <span class="mute">±${Math.round(fix.acc)} m · ${packs.status === 'loading' ? 'loading places…' : packs.status === 'none' ? 'no places data for this area yet' : res.spot ? 'a spot you’ve been before' : 'no known place nearby'}</span>`;
+  const decision = L.decide(res, S.settings.level, fix);
+  const top = res.ranked[0];
+  let hint = '';
+  if (cap.picked) hint = `<span class="good">✓ Will be filed under <b>${esc(catOf(cap.picked)?.name)}</b></span>`;
+  else if (!S.categories.length) hint = '';
+  else if (decision === 'auto') hint = `<span class="good">✓ Will be filed under <b>${esc(catOf(top.catId).name)}</b> automatically</span>`;
+  else if (fix || geo.state === 'off' || geo.state === 'denied') hint = '<span class="warn">Not sure enough to file this by itself — tap a category, or save it and pick later.</span>';
+  const chips = res.ranked.map(r => { const c = catOf(r.catId); return c ? `<button type="button" class="chipbtn ${cap.picked === c.id ? 'on' : ''}" data-act="pick" data-id="${c.id}">${c.emoji} ${esc(c.name)}${r.p >= 0.3 ? ` <span class="pct">${Math.round(r.p * 100)}%</span>` : ''}</button>` : ''; }).join('');
+  return `<div class="capline">${line}</div>${chips ? `<div class="chips tight">${chips}</div>` : ''}${hint ? `<div class="small caphint">${hint}</div>` : ''}`;
+}
+function refreshCapture() {
+  const el = $('capture');
+  if (!el || !sheet.open) return stopLocating();
+  el.innerHTML = captureHTML();
+  // Fill in what we remember paying here, unless the user has already typed something.
+  const amt = document.querySelector('#sheet [name=amount]');
+  const m = cap.res.place && cap.res.place.p >= 0.5 && S.learn.merchants[cap.res.place.key];
+  if (amt && m?.amt && !amt.dataset.touched && amt.dataset.filled !== cap.res.place.key) { amt.value = m.amt; amt.dataset.filled = cap.res.place.key; amt.select?.(); }
+}
+
 function txSheet(tx, preset = {}) {
   const editing = !!tx;
   const type = tx?.type ?? preset.type ?? 'expense';
-  const lastCat = catOf(S.settings.lastCat) ? S.settings.lastCat : S.categories[0]?.id;
-  const selCat = tx ? tx.cat : (preset.cat ?? lastCat);
   const date = tx?.date ?? L.todayStr();
   const recent = [...new Set(S.transactions.slice().reverse().map(t => t.note).filter(Boolean))].slice(0, 40);
+  cap.picked = !editing && preset.cat && catOf(preset.cat) ? preset.cat : null;
+  const selCat = tx ? tx.cat : cap.picked;
+  const amount0 = tx ? tx.amount : (S.settings.lastAmount || '');
   openSheet(`
     <h3>${editing ? 'Edit' : 'Add'} transaction</h3>
     <div class="field">${typeSeg(type)}</div>
     <div class="field"><label for="f-amount" class="vh">Amount</label>
-      <input id="f-amount" class="amount" name="amount" type="number" inputmode="decimal" step="any" min="0.01" placeholder="0.00" value="${tx ? tx.amount : ''}" required></div>
-    <div class="field" id="catfield"><span class="lab">Category</span>${catChips(selCat)}</div>
-    <div class="field"><label for="f-note">Note (optional)</label>
-      <input id="f-note" name="note" type="text" maxlength="80" list="notes" autocomplete="off" placeholder="What was it for?" value="${esc(tx?.note)}">
-      <datalist id="notes">${recent.map(n => `<option value="${esc(n)}">`).join('')}</datalist></div>
-    ${dateField(date)}
+      <input id="f-amount" class="amount" name="amount" type="number" inputmode="decimal" step="any" min="0.01" placeholder="0.00" value="${amount0}" required></div>
+    ${editing ? '' : '<div id="capture" class="capture"></div>'}
+    ${editing && tx.status === 'review' ? '<p class="small warn" style="margin:0">Needs a category — pick one below.</p>' : ''}
+    <details id="more" class="more" ${editing ? 'open' : ''}><summary>${editing ? 'Details' : 'Category, note & date'}</summary>
+      <div class="field" id="catfield"><span class="lab">Category</span>${catChips(selCat)}</div>
+      <div class="field"><label for="f-note">Note (optional)</label>
+        <input id="f-note" name="note" type="text" maxlength="80" list="notes" autocomplete="off" placeholder="What was it for?" value="${esc(tx?.note)}">
+        <datalist id="notes">${recent.map(n => `<option value="${esc(n)}">`).join('')}</datalist></div>
+      ${dateField(date)}
+    </details>
     <div class="actions">${editing ? '<button class="btn danger spacer" value="delete" formnovalidate>Delete</button>' : '<button class="btn" value="cancel" formnovalidate>Cancel</button>'}
       <button class="btn primary" value="save">${editing ? 'Save' : 'Add'}</button></div>`,
   (v, fd) => {
-    if (v === 'delete') { change('Transaction deleted', () => { S.transactions = S.transactions.filter(t => t.id !== tx.id); }); return; }
+    if (v === 'delete') { change('Transaction deleted', () => { L.unlearnFiling(S, tx); S.transactions = S.transactions.filter(t => t.id !== tx.id); }); return; }
     const amount = L.round2(parseFloat(fd.get('amount')));
     if (!(amount > 0)) return false;
     const t = fd.get('type') === 'income' ? 'income' : 'expense';
-    const cat = t === 'expense' ? (fd.get('cat') || null) : null;
-    const next = { id: tx?.id ?? L.uid(), type: t, amount, cat, note: String(fd.get('note') || '').trim(), date: fd.get('date'), ...(tx?.rec ? { rec: tx.rec } : {}) };
-    change(editing ? 'Transaction updated' : `Added ${money(amount)}${cat ? ' to ' + catOf(cat).name : ''}`, () => {
-      if (editing) S.transactions[S.transactions.findIndex(x => x.id === tx.id)] = next; else S.transactions.push(next);
-      if (cat) S.settings.lastCat = cat;
+    const note = String(fd.get('note') || '').trim(), date = fd.get('date');
+    const chosen = t === 'expense' ? (fd.get('cat') || cap.picked || null) : null;
+
+    if (editing) {
+      change('Transaction updated', () => {
+        const x = S.transactions.find(q => q.id === tx.id);
+        Object.assign(x, { type: t, amount, note, date });
+        if (t === 'income') { if (x.cat && !x.status) L.unlearnFiling(S, x); x.cat = null; delete x.status; delete x.sugg; delete x.auto; }
+        else if (chosen) { fileTx(x, chosen, false); S.settings.lastCat = chosen; }
+        else if (x.cat && !x.status) { L.unlearnFiling(S, x); x.cat = null; delete x.auto; }
+      });
+      return;
+    }
+
+    // New transaction: decide whether it can be filed by itself.
+    const res = cap.res, fix = geo.fix && t === 'expense' ? geo.fix : null;
+    const place = res?.place && res.place.p >= 0.35 ? { key: res.place.key, name: res.place.name } : null;
+    const base = { id: L.uid(), type: t, amount, cat: null, note, date };
+    if (t === 'expense' && fix && fix.acc <= 150) {
+      base.loc = [Math.round(fix.lat * 1e4) / 1e4, Math.round(fix.lng * 1e4) / 1e4];
+      if (place) { base.merchant = place.name; base.mkey = place.key; }
+      else { const near = res.cands.filter(c => c.p >= 0.15).slice(0, 2).map(c => c.name); if (near.length) base.near = near; }
+    }
+    let msg;
+    if (t === 'income') { msg = `Added ${money(amount)} income`; }
+    else if (chosen) { msg = `Added ${money(amount)} to ${catOf(chosen).name}`; }
+    else if (L.decide(res, S.settings.level, fix) === 'auto') { base.__auto = res.ranked[0].catId; msg = `Filed ${money(amount)} under ${catOf(base.__auto).name}${place ? ' · ' + place.name : ''}`; }
+    else { base.status = 'review'; base.sugg = res.ranked.slice(0, 3).map(r => r.catId); msg = `Saved ${money(amount)} — it needs a category`; }
+    change(msg, () => {
+      const auto = base.__auto; delete base.__auto;
+      S.transactions.push(base);
+      if (chosen) { fileTx(base, chosen, false); S.settings.lastCat = chosen; }
+      else if (auto) fileTx(base, auto, true);
+      if (t === 'expense') S.settings.lastAmount = amount;
     });
-    if (next.date.slice(0, 7) !== ui.month && ui.tab !== 'settings' && ui.tab !== 'goals') { ui.month = next.date.slice(0, 7); render(); }
+    if (date.slice(0, 7) !== ui.month && ui.tab !== 'settings' && ui.tab !== 'goals') { ui.month = date.slice(0, 7); render(); }
   },
   form => {
-    const toggle = () => { $('catfield').hidden = form.elements.type.value === 'income'; };
-    form.addEventListener('change', e => { if (e.target.name === 'type') toggle(); });
+    const toggle = () => { const inc = form.elements.type.value === 'income'; $('catfield').hidden = inc; if ($('capture')) $('capture').hidden = inc; };
+    form.addEventListener('change', e => { if (e.target.name === 'type') toggle(); if (e.target.name === 'cat') { cap.picked = e.target.value || null; if ($('capture')) refreshCapture(); } });
     toggle();
-    let picked = !!tx; // don't override a category the user chose themselves (or an existing one)
-    form.addEventListener('change', e => { if (e.target.name === 'cat') picked = true; });
+    const amt = form.elements.amount;
+    amt.addEventListener('input', () => { amt.dataset.touched = '1'; });
+    if (!editing) {
+      startLocating(refreshCapture);
+      refreshCapture();
+      setTimeout(() => { amt.focus(); amt.select(); }, 50);
+    }
+    // With no location help, fall back to remembering which category a note went to last time.
     form.elements.note.addEventListener('input', e => {
-      if (picked) return;
+      if (cap.picked || form.elements.cat.value) return;
       const key = e.target.value.trim().toLowerCase();
       const m = key && S.transactions.slice().reverse().find(t => t.type === 'expense' && t.cat && t.note.toLowerCase() === key);
-      if (m) { const r = form.querySelector(`input[name=cat][value="${m.cat}"]`); if (r) r.checked = true; }
+      if (m) { const r = form.querySelector(`input[name=cat][value="${m.cat}"]`); if (r) { r.checked = true; cap.picked = m.cat; refreshCapture(); } }
     });
-    if (!editing) setTimeout(() => form.elements.amount.focus(), 50);
   });
+}
+
+// ---- review pile ----
+let rvUndo = null;
+function reviewSheet(note) {
+  const list = L.reviewList(S);
+  const undoBar = note ? `<div class="undobar"><span>${esc(note)}</span>${rvUndo ? '<button type="button" class="link" data-act="rvundo">Undo</button>' : ''}</div>` : '';
+  if (!list.length) {
+    openSheet(`<h3>All caught up 🎉</h3>${undoBar}<p class="mute">Nothing needs a category right now.</p><div class="actions"><button class="btn primary" value="cancel" formnovalidate>Done</button></div>`);
+    return;
+  }
+  const fallback = S.categories.slice(0, 3).map(c => c.id);
+  openSheet(`<h3>Needs a category</h3>${undoBar}
+    <p class="mute small" style="margin:0 0 6px">One tap files each one. Calibr learns from your choices, so there will be fewer of these over time.</p>
+    ${list.map(t => `<div class="rv"><div class="row"><span class="grow"><b>${money(t.amount)}</b> <span class="mute">${esc(t.merchant || t.note || (t.near ? 'near ' + t.near.join(' or ') : 'Expense'))} · ${prettyDate(t.date)}</span></span>
+      <button type="button" class="del" data-act="rvdel" data-id="${t.id}" aria-label="Delete">✕</button></div>
+      <div class="chips tight">${(t.sugg?.length ? t.sugg : fallback).map(id => catOf(id)).filter(Boolean).map(c => `<button type="button" class="chipbtn" data-act="resolve" data-id="${t.id}" data-cat="${c.id}">${c.emoji} ${esc(c.name)}</button>`).join('')}
+      <button type="button" class="chipbtn ghost" data-act="rvother" data-id="${t.id}">Other…</button></div></div>`).join('')}
+    <div class="actions"><button class="btn primary" value="cancel" formnovalidate>Done</button></div>`);
+}
+function reviewChange(msg, fn) {
+  const before = JSON.stringify(S);
+  fn(); save(); render();
+  rvUndo = () => { S = L.sanitize(JSON.parse(before)); save(); render(); };
+  reviewSheet(msg);
 }
 
 // ---- category sheets ----
@@ -160,6 +320,7 @@ function catSheet(cat) {
     <div class="field"><label for="f-emoji">Icon</label><input id="f-emoji" name="emoji" type="text" value="${esc(cat?.emoji ?? '🏷️')}" style="width:5rem;text-align:center;font-size:1.4rem">${emojiPicker()}</div>
     <div class="field"><label for="f-name">Name</label><input id="f-name" name="name" type="text" maxlength="40" required value="${esc(cat?.name)}" placeholder="e.g. Groceries"></div>
     <div class="field"><label for="f-limit">Monthly limit</label><input id="f-limit" name="limit" type="number" inputmode="decimal" step="any" min="0" value="${cat?.limit ?? ''}" placeholder="0" required></div>
+    <div class="field"><label for="f-kind">Place type (for location suggestions)</label><select id="f-kind" name="kind"><option value="">Auto: ${esc(L.kindsOf({ name: cat?.name ?? '' }).join(', ') || 'none')}</option>${L.KINDS.map(k => `<option value="${k}" ${cat?.kind === k ? 'selected' : ''}>${KIND_LABEL[k]}</option>`).join('')}</select></div>
     <div class="field"><label class="check"><input type="checkbox" name="rollover" ${cat?.rollover ? 'checked' : ''}><span>Carry unspent money into next month<br><span class="mute small">Starts from this month. Overspending doesn't carry over.</span></span></label></div>
     <div class="actions">${editing ? '<button class="btn danger spacer" value="delete" formnovalidate>Delete</button>' : '<button class="btn" value="cancel" formnovalidate>Cancel</button>'}
       <button class="btn primary" value="save">Save</button></div>`,
@@ -175,7 +336,7 @@ function catSheet(cat) {
     const name = String(fd.get('name')).trim();
     if (!name) return false;
     const rollover = fd.get('rollover') === 'on';
-    const data = { emoji: firstGlyph(fd.get('emoji')) || '🏷️', name, limit: Math.max(0, L.round2(parseFloat(fd.get('limit')) || 0)), rollover };
+    const data = { emoji: firstGlyph(fd.get('emoji')) || '🏷️', name, limit: Math.max(0, L.round2(parseFloat(fd.get('limit')) || 0)), rollover, kind: fd.get('kind') || undefined };
     change(editing ? 'Category updated' : 'Category added', () => {
       if (editing) {
         Object.assign(cat, data);
@@ -282,15 +443,12 @@ function recSheet(rec) {
 function onboardSheet() {
   openSheet(`
     <h3>Welcome to Calibr 👋</h3>
-    <p class="mute" style="margin:0 0 4px">Set a limit for each kind of spending, log what you spend, and always know what's left. Everything stays on this device.</p>
-    <div class="field"><label for="f-income">Monthly income (after tax)</label><input id="f-income" name="income" type="number" inputmode="decimal" step="any" min="0" placeholder="e.g. 3000"></div>
+    <p class="mute" style="margin:0 0 4px">Log a purchase in seconds. Calibr uses where you are to guess the category, and you set a limit for each one. Everything stays on this device.</p>
+    <div class="field"><span class="lab">Pick the categories you'll use (5–6 is plenty)</span>
+      <div class="chips">${L.PRESETS.map(([emoji, name, , , on]) => `<label><input class="vh" type="checkbox" name="cats" value="${esc(name)}" ${on ? 'checked' : ''}><span>${emoji} ${esc(name)}</span></label>`).join('')}</div></div>
+    <div class="field"><label for="f-income">Monthly income, after tax (optional)</label><input id="f-income" name="income" type="number" inputmode="decimal" step="any" min="0" placeholder="Used to suggest limits"></div>
     <div class="field"><label for="f-cur">Currency</label><select id="f-cur" name="currency">${L.CURRENCIES.map(([c, n]) => `<option value="${c}" ${c === S.settings.currency ? 'selected' : ''}>${c} · ${n}</option>`).join('')}</select></div>
-    <div class="field"><span class="lab">Starting categories</span>
-      <div class="chips" role="radiogroup">
-        <label><input class="vh" type="radio" name="tpl" value="essentials" checked><span>Everyday essentials</span></label>
-        <label><input class="vh" type="radio" name="tpl" value="503020"><span>50/30/20</span></label>
-        <label><input class="vh" type="radio" name="tpl" value="blank"><span>Start blank</span></label></div>
-      <p class="mute small" style="margin:8px 0 0">Limits are suggested from your income. You can change everything later.</p></div>
+    <div class="field"><label class="check"><input type="checkbox" name="locate" checked><span>Use my location to suggest categories<br><span class="mute small">Only while you're adding a purchase. Never leaves your device.</span></span></label></div>
     <div class="actions"><button class="btn" value="skip" formnovalidate>Skip</button><button class="btn primary" value="go">Get started</button></div>`,
   (v, fd) => {
     S.settings.onboarded = true;
@@ -298,14 +456,23 @@ function onboardSheet() {
       const income = Math.max(0, L.round2(parseFloat(fd.get('income')) || 0));
       S.settings.currency = fd.get('currency');
       S.settings.income = income;
-      if (!S.categories.length) S.categories = L.template(fd.get('tpl'), income);
+      S.settings.locate = fd.get('locate') === 'on';
+      if (!S.categories.length) S.categories = L.fromPresets(fd.getAll('cats'), income);
+      if (S.settings.locate) navigator.geolocation?.getCurrentPosition(() => {}, () => {}, { timeout: 10000 }); // ask for permission now, while the user expects it
     }
     save(); render();
   }, null, 'go');
 }
-sheet.addEventListener('close', () => { if (!S.settings.onboarded && sheet.querySelector('[name=tpl]')) { S.settings.onboarded = true; save(); render(); } });
+sheet.addEventListener('close', () => { if (!S.settings.onboarded && sheet.querySelector('[name=cats]')) { S.settings.onboarded = true; save(); render(); } });
 
 // ---------- views ----------
+function placesStatus() {
+  if (packs.entry) return `${esc(packs.entry.label)} · ${packs.entry.places.toLocaleString()} places`;
+  if (!packs.list) { loadPackList().then(() => ui.tab === 'settings' && render()); return 'Checking…'; }
+  if (!packs.list.length) return 'None installed. Calibr will learn the places you visit; see the README to add a city.';
+  return 'Loads automatically when you add a purchase in a covered area.';
+}
+
 const views = {
   budget() {
     const today = L.todayStr(), cur = ui.month === L.monthOf(today);
@@ -327,7 +494,9 @@ const views = {
       ? `<span>Income ${money(inc)}</span><span class="${unassigned < 0 ? 'over' : ''}">${unassigned < 0 ? `Limits exceed income by ${money(-unassigned)}` : `${money(unassigned)} unassigned`}</span>`
       : `<button class="link small" data-act="tab" data-tab="settings">Set your monthly income →</button><span></span>`;
     const upcoming = cur ? L.upcoming(S, today, 14) : [];
-    return `<section class="card hero"><div class="label">Left this month</div>
+    const nReview = L.reviewList(S).length;
+    const banner = nReview ? `<button class="card banner" data-act="review"><span class="emoji">📥</span><span class="grow"><b>${plural(nReview, 'purchase')} need${nReview === 1 ? 's' : ''} a category</b><br><span class="small mute">One tap each to file them</span></span><span class="link">Review ›</span></button>` : '';
+    return `${banner}<section class="card hero"><div class="label">Left this month</div>
       <div class="big ${B.left < 0 ? 'over' : ''}">${money(B.left)}</div>${bar(pct)}
       <div class="sub"><span>${money(B.spent)} spent</span><span>of ${money(B.budget)}</span></div>
       <div class="sub">${incomeLine}</div>${hint ? `<div class="hint">${hint}</div>` : ''}</section>
@@ -340,7 +509,7 @@ const views = {
         <div class="row"><span class="emoji">${r.cat.emoji}</span><span class="grow"><div class="title">${esc(r.cat.name)}</div>
         <div class="small mute">${money(r.spent)} of ${money(r.avail)}${r.carry > 0 ? ` · +${money(r.carry)} carried` : ''}</div></span>
         <span class="amt ${r.left < 0 ? 'over' : ''}"><b>${money(Math.abs(r.left))}</b> <span class="mute small">${r.left < 0 ? 'over' : 'left'}</span></span></div>${bar(r.pct, 'thin')}</button></li>`).join('')}
-        ${B.uncategorized > 0 ? `<li><div class="rowbtn"><div class="row"><span class="emoji">❔</span><span class="grow"><div class="title">Uncategorized</div><div class="small mute">Not counted toward a category</div></span><span class="amt">${money(B.uncategorized)}</span></div></div></li>` : ''}
+        ${B.uncategorized > 0 ? `<li><div class="rowbtn"><div class="row"><span class="emoji">❔</span><span class="grow"><div class="title">${L.reviewList(S).length ? 'Needs a category' : 'Uncategorized'}</div><div class="small mute">Counted in your total, not in a category</div></span><span class="amt">${money(B.uncategorized)}</span></div></div></li>` : ''}
       </ul>
       <button class="addrow" data-act="addcat">+ Add category</button>`;
   },
@@ -351,7 +520,7 @@ const views = {
     const exp = txs.filter(t => t.type === 'expense').reduce((a, t) => a + t.amount, 0);
     return `<div class="stats" style="margin-top:6px"><div class="stat"><div class="k">Spent</div><div class="v">${money(exp)}</div></div><div class="stat"><div class="k">Income</div><div class="v good">${money(inc)}</div></div></div>
       <div class="filters"><input id="q" type="search" placeholder="Search notes" aria-label="Search" value="${esc(ui.q)}">
-      <select id="ftype" aria-label="Type"><option value="all">All types</option><option value="expense" ${ui.type === 'expense' ? 'selected' : ''}>Expenses</option><option value="income" ${ui.type === 'income' ? 'selected' : ''}>Income</option></select>
+      <select id="ftype" aria-label="Type"><option value="all">All types</option><option value="expense" ${ui.type === 'expense' ? 'selected' : ''}>Expenses</option><option value="income" ${ui.type === 'income' ? 'selected' : ''}>Income</option><option value="review" ${ui.type === 'review' ? 'selected' : ''}>Needs category</option><option value="auto" ${ui.type === 'auto' ? 'selected' : ''}>Auto-filed</option></select>
       <select id="fcat" aria-label="Category"><option value="all">All categories</option>${S.categories.map(c => `<option value="${c.id}" ${ui.cat === c.id ? 'selected' : ''}>${c.emoji} ${esc(c.name)}</option>`).join('')}<option value="none" ${ui.cat === 'none' ? 'selected' : ''}>❔ Uncategorized</option></select></div>
       <div id="txlist">${txList()}</div>`;
   },
@@ -406,6 +575,14 @@ const views = {
         <div class="setrow"><label for="s-income">Monthly income</label><input id="s-income" data-bind="income" type="number" inputmode="decimal" step="any" min="0" value="${st.income || ''}" placeholder="0"></div>
         <div class="setrow"><label for="s-cur">Currency</label><select id="s-cur" data-bind="currency">${L.CURRENCIES.map(([c, n]) => `<option value="${c}" ${c === st.currency ? 'selected' : ''}>${c} · ${n}</option>`).join('')}</select></div>
         <div class="setrow"><label for="s-theme">Appearance</label><select id="s-theme" data-bind="theme">${['auto', 'light', 'dark'].map(t => `<option value="${t}" ${st.theme === t ? 'selected' : ''}>${t[0].toUpperCase() + t.slice(1)}</option>`).join('')}</select></div></div>
+      <h2>Smart capture</h2><div class="list">
+        <div class="setrow"><label for="s-loc">Use location to suggest categories</label><input id="s-loc" data-bind="locate" type="checkbox" ${st.locate ? 'checked' : ''} style="width:22px;height:22px;accent-color:var(--brand)"></div>
+        <div class="setrow"><label for="s-level">Auto-file when</label><select id="s-level" data-bind="level"><option value="cautious" ${st.level === 'cautious' ? 'selected' : ''}>Very sure</option><option value="balanced" ${st.level === 'balanced' ? 'selected' : ''}>Fairly sure</option><option value="eager" ${st.level === 'eager' ? 'selected' : ''}>Pretty sure</option></select></div>
+        <div class="setrow"><span>Places data</span><span class="mute small" style="text-align:right;max-width:60%">${placesStatus()}</span></div>
+        <div class="setrow"><span>Learned so far</span><span class="mute small">${plural(Object.keys(S.learn.merchants).length, 'place')} · ${plural(S.learn.spots.length, 'spot')}</span></div>
+        ${S.learn.stats.auto ? `<div class="setrow"><span>Auto-filed so far</span><span class="mute small">${S.learn.stats.auto} · corrected ${S.learn.stats.fixed} (${Math.round((S.learn.stats.fixed / S.learn.stats.auto) * 100)}%)</span></div>` : ''}
+        <div class="setrow"><span>Forget what Calibr learned</span><button class="link over" data-act="forget">Forget…</button></div></div>
+      <p class="mute small" style="margin:8px 4px 0">Anything Calibr isn't sure about goes to a review list instead of being filed. "Very sure" sends more there; "Pretty sure" sends fewer. Your location is only read while the add screen is open and is never uploaded.</p>
       <h2>Recurring &amp; bills <button class="link" data-act="addrec">+ Add</button></h2>
       ${S.recurring.length ? `<ul class="list">${S.recurring.map(r => `<li><button class="rowbtn" data-act="rec" data-id="${r.id}"><div class="row"><span class="emoji">${r.type === 'income' ? '💵' : catOf(r.cat)?.emoji ?? '🔁'}</span><span class="grow"><div class="title">${esc(r.note)}</div><div class="small mute">${L.FREQUENCIES[r.freq]} · next ${prettyDate(r.next)}</div></span><span class="amt ${r.type === 'income' ? 'inc' : ''}">${r.type === 'income' ? '+' : ''}${money(r.amount)}</span></div></button></li>`).join('')}</ul>`
         : `<div class="card empty" style="margin:0"><p>Rent, subscriptions, paychecks — add them once and Calibr logs them for you.</p></div>`}
@@ -421,14 +598,15 @@ const views = {
 
 function txRow(t) {
   const c = catOf(t.cat), inc = t.type === 'income';
+  const sub = inc ? 'Income' : t.status === 'review' ? '<span class="warn">Needs a category</span>' : esc(c?.name ?? 'Uncategorized');
   return `<li><button class="rowbtn" data-act="tx" data-id="${t.id}"><div class="row"><span class="emoji">${inc ? '💵' : c?.emoji ?? '❔'}</span>
-    <span class="grow"><div class="title">${esc(t.note || (inc ? 'Income' : c?.name ?? 'Expense'))}</div><div class="small mute">${inc ? 'Income' : esc(c?.name ?? 'Uncategorized')}${t.rec ? ' · ↻ recurring' : ''}</div></span>
+    <span class="grow"><div class="title">${esc(t.note || t.merchant || (t.near ? 'Near ' + t.near.join(' or ') : inc ? 'Income' : c?.name ?? 'Expense'))}</div><div class="small mute">${sub}${t.merchant && t.note ? ' · ' + esc(t.merchant) : ''}${t.auto ? ' · 📍 auto' : ''}${t.rec ? ' · ↻ recurring' : ''}</div></span>
     <span class="amt ${inc ? 'inc' : ''}">${inc ? '+' : ''}${money(t.amount)}</span></div></button></li>`;
 }
 function txList() {
   const q = ui.q.trim().toLowerCase();
   let txs = L.monthTx(S, ui.month).filter(t =>
-    (ui.type === 'all' || t.type === ui.type) &&
+    (ui.type === 'all' || t.type === ui.type || (ui.type === 'review' && t.status === 'review') || (ui.type === 'auto' && t.auto)) &&
     (ui.cat === 'all' || (ui.cat === 'none' ? t.type === 'expense' && !catOf(t.cat) : t.cat === ui.cat)) &&
     (!q || t.note.toLowerCase().includes(q) || (catOf(t.cat)?.name.toLowerCase().includes(q))));
   if (!txs.length) return `<div class="card empty"><span class="big">🧾</span>${L.monthTx(S, ui.month).length ? 'No transactions match.' : '<b>No transactions this month</b><p>Tap + to add your first one.</p>'}</div>`;
@@ -482,6 +660,20 @@ const actions = {
   fund: el => fundSheet(S.goals.find(g => g.id === el.dataset.id)),
   addrec: () => recSheet(null),
   rec: el => recSheet(S.recurring.find(r => r.id === el.dataset.id)),
+  pick: el => { cap.picked = cap.picked === el.dataset.id ? null : el.dataset.id; const r = document.querySelector(`#sheet input[name=cat][value="${cap.picked || ''}"]`); if (r) r.checked = true; refreshCapture(); },
+  enableloc: () => { S.settings.locate = true; save(); startLocating(refreshCapture); refreshCapture(); },
+  review: () => reviewSheet(),
+  resolve: el => {
+    const t = S.transactions.find(x => x.id === el.dataset.id), c = catOf(el.dataset.cat);
+    if (t && c) reviewChange(`Filed ${money(t.amount)} under ${c.name}`, () => fileTx(t, c.id, false));
+  },
+  rvdel: el => { const t = S.transactions.find(x => x.id === el.dataset.id); if (t) reviewChange('Deleted', () => { S.transactions = S.transactions.filter(x => x.id !== t.id); }); },
+  rvother: el => { const t = S.transactions.find(x => x.id === el.dataset.id); if (t) { closeSheet(); txSheet(t); } },
+  rvundo: () => { const u = rvUndo; rvUndo = null; u?.(); reviewSheet('Undone'); },
+  forget: () => {
+    if (!confirm('Forget every place and spot Calibr has learned? Your transactions are not affected.')) return;
+    change('Learning reset', () => { S.learn = { merchants: {}, spots: [], stats: S.learn.stats }; });
+  },
   emoji: el => { el.closest('form').elements.emoji.value = el.dataset.e; },
   setdate: el => { const i = el.closest('.datepick').querySelector('input[type=date]'); i.value = L.addDays(L.todayStr(), +el.dataset.d); i.dispatchEvent(new Event('change', { bubbles: true })); },
   undo: () => { $('toast').hidden = true; toast.undo?.(); toast.undo = null; },
@@ -513,6 +705,8 @@ document.addEventListener('change', ev => {
   const bind = t.dataset?.bind;
   if (bind === 'income') { S.settings.income = Math.max(0, L.round2(parseFloat(t.value) || 0)); save(); toast('Income saved'); }
   else if (bind === 'currency') { S.settings.currency = t.value; save(); render(); }
+  else if (bind === 'locate') { S.settings.locate = t.checked; save(); }
+  else if (bind === 'level') { S.settings.level = t.value; save(); }
   else if (bind === 'theme') { S.settings.theme = t.value; save(); applyTheme(); }
   else if (t.id === 'ftype') { ui.type = t.value; $('txlist').innerHTML = txList(); }
   else if (t.id === 'fcat') { ui.cat = t.value; $('txlist').innerHTML = txList(); }

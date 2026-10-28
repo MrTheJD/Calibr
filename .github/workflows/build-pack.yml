@@ -1,0 +1,52 @@
+name: Build places pack
+
+# Builds an offline places pack for an area (from Overture Maps), commits it to main and redeploys the site.
+# Run it from the Actions tab: "Build places pack" -> "Run workflow".
+
+on:
+  workflow_dispatch:
+    inputs:
+      name:
+        description: 'File name, lowercase letters/digits/dashes (e.g. austin)'
+        required: true
+      place:
+        description: 'Place to center on (e.g. "Austin, Texas")'
+        required: true
+      radius_km:
+        description: 'Radius in km (6 is a good start; dense cities produce bigger files)'
+        required: true
+        default: '6'
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install "duckdb==1.4.2"
+      - name: Build pack
+        env:
+          PACK_NAME: ${{ inputs.name }}
+          PACK_PLACE: ${{ inputs.place }}
+          PACK_RADIUS: ${{ inputs.radius_km }}
+        run: python tools/build_pack.py --name "$PACK_NAME" --place "$PACK_PLACE" --radius-km "$PACK_RADIUS"
+      - name: Commit and redeploy
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACK_NAME: ${{ inputs.name }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packs
+          git commit -m "Add places pack: $PACK_NAME"
+          git push origin HEAD:main
+          # pushes made with GITHUB_TOKEN don't trigger other workflows, so start the deploy explicitly
+          gh workflow run pages.yml --ref main

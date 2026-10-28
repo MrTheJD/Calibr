@@ -115,7 +115,7 @@ test('presets scale to income and carry their kind', () => {
 test('csv quotes commas and quotes', () => {
   const s = mk();
   s.transactions = [{ id: '1', type: 'expense', amount: 3, cat: 'g', note: 'say "hi", ok', date: '2026-10-01' }];
-  assert.equal(L.toCSV(s).split('\n')[1], '2026-10-01,expense,"Groceries","say ""hi"", ok",3.00');
+  assert.equal(L.toCSV(s).split('\n')[1], '2026-10-01,expense,"Groceries","say ""hi"", ok","",3.00');
 });
 
 // ---------- places, suggestions, learning ----------
@@ -219,12 +219,13 @@ test('unlearn undoes learn', () => {
 
 test('sanitize keeps review state and learned data, drops stale category ids', () => {
   const s = state(), g = cat(s, 'Groceries');
-  s.transactions = [{ id: 'a', type: 'expense', amount: 5, cat: null, note: '', date: '2026-10-01', status: 'review', sugg: [g, 'ghost'], merchant: 'X', mkey: 'x', loc: [40.123456, -73.123456] }];
+  s.transactions = [{ id: 'a', type: 'expense', amount: 5, cat: null, note: '', date: '2026-10-01', status: 'review', sugg: [g, 'ghost'], merchant: 'X', mkey: 'x', near: ['A', 'B', 'C'], loc: [40.123456, -73.123456] }];
   s.learn.merchants.x = { name: 'X', n: 3, cats: { [g]: 2, ghost: 1 }, amt: 5 };
   const t = L.sanitize(JSON.parse(JSON.stringify(s)));
   assert.equal(t.transactions[0].status, 'review');
   assert.deepEqual(t.transactions[0].sugg, [g]);
   assert.deepEqual(t.transactions[0].loc, [40.1235, -73.1235]);
+  assert.deepEqual(t.transactions[0].near, ['A', 'B']);
   assert.deepEqual(t.learn.merchants.x.cats, { [g]: 2 });
   assert.equal(L.reviewList(t).length, 1);
 });

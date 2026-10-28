@@ -51,7 +51,7 @@ export const defaultState = () => ({
   transactions: [],
   recurring: [],
   goals: [],
-  learn: { merchants: {}, spots: [] },
+  learn: { merchants: {}, spots: [], stats: { auto: 0, fixed: 0 } },
 });
 
 const CODES = new Set(CURRENCIES.map(c => c[0]));
@@ -100,6 +100,7 @@ export function sanitize(raw) {
         ...(!income && t.status === 'review' ? { status: 'review', sugg: (Array.isArray(t.sugg) ? t.sugg : []).filter(x => catIds.has(x)).slice(0, 3) } : {}),
         ...(t.auto && !income && catIds.has(t.cat) ? { auto: true } : {}),
         ...(str(t.merchant) ? { merchant: str(t.merchant).slice(0, 80), mkey: str(t.mkey).slice(0, 80) } : {}),
+        ...(Array.isArray(t.near) && t.near.length ? { near: t.near.filter(x => typeof x === 'string').slice(0, 2).map(x => x.slice(0, 60)) } : {}),
         ...(Array.isArray(t.loc) && t.loc.length === 2 && t.loc.every(Number.isFinite) ? { loc: t.loc.map(x => Math.round(x * 1e4) / 1e4) } : {}),
       };
     });
@@ -135,6 +136,8 @@ export function sanitize(raw) {
     .filter(p => p && Number.isFinite(+p.lat) && Number.isFinite(+p.lng))
     .map(p => { const cats = cleanCats(p.cats); return { lat: +p.lat, lng: +p.lng, n: Object.values(cats).reduce((a, b) => a + b, 0), cats }; })
     .filter(p => p.n > 0);
+  const lst = raw.learn?.stats;
+  s.learn.stats = { auto: Math.max(0, Math.round(num(lst?.auto))), fixed: Math.max(0, Math.round(num(lst?.fixed))) };
   return s;
 }
 export const migrate = sanitize;
@@ -237,7 +240,7 @@ export function toCSV(s) {
   const q = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
   const name = id => s.categories.find(c => c.id === id)?.name ?? '';
   const rows = [...s.transactions].sort((a, b) => a.date.localeCompare(b.date));
-  return ['Date,Type,Category,Note,Amount', ...rows.map(t => [t.date, t.type, q(name(t.cat)), q(t.note), t.amount.toFixed(2)].join(','))].join('\n');
+  return ['Date,Type,Category,Note,Merchant,Amount', ...rows.map(t => [t.date, t.type, q(name(t.cat)), q(t.note), q(t.merchant), t.amount.toFixed(2)].join(','))].join('\n');
 }
 
 

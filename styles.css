@@ -105,7 +105,7 @@ dialog h3{margin:0 0 4px;font-size:1.2rem}
 .amount{font-size:2rem!important;font-weight:700;text-align:center}
 .chips{display:flex;flex-wrap:wrap;gap:8px}
 .chips label{cursor:pointer}
-.chips span{display:block;padding:8px 12px;border:1px solid var(--line);border-radius:99px;background:var(--bg);font-size:.92rem}
+.chips label>span{display:block;padding:8px 12px;border:1px solid var(--line);border-radius:99px;background:var(--bg);font-size:.92rem}
 .chips input:checked+span{background:var(--brand);color:var(--brand-ink);border-color:var(--brand)}
 .emojis{display:flex;flex-wrap:wrap;gap:4px;margin-top:8px}
 .emojis button{background:var(--bg);border:1px solid var(--line);border-radius:10px;width:38px;height:38px;font-size:1.2rem}
@@ -115,3 +115,29 @@ dialog h3{margin:0 0 4px;font-size:1.2rem}
 
 #toast{position:fixed;left:50%;transform:translateX(-50%);width:max-content;max-width:min(92vw,420px);bottom:calc(140px + env(safe-area-inset-bottom));background:#1f2b29;color:#fff;padding:12px 16px;border-radius:14px;z-index:20;display:flex;gap:16px;align-items:center;max-width:92vw;box-shadow:0 6px 20px #0005}
 #toast button{background:none;border:0;color:#5eead4;font-weight:700;padding:0}
+
+.capture{margin:6px 0 2px}
+.capline{font-size:.95rem;padding:2px 2px 6px}
+.chips.tight{gap:6px}
+.chipbtn{padding:9px 14px;border:1px solid var(--line);border-radius:99px;background:var(--bg);font-size:.95rem}
+.chipbtn.on{background:var(--brand);color:var(--brand-ink);border-color:var(--brand)}
+.chipbtn.ghost{background:none;color:var(--mute)}
+.chipbtn .pct{font-size:.75rem;opacity:.75}
+.caphint{margin:8px 2px 0}
+.more{margin:10px 0 0;border-top:1px solid var(--line);padding-top:6px}
+.more>summary{cursor:pointer;color:var(--mute);font-size:.9rem;padding:8px 0;list-style:none}
+.more>summary::before{content:'▸ '}.more[open]>summary::before{content:'▾ '}
+.banner{display:flex;align-items:center;gap:12px;width:100%;text-align:left;border-color:var(--warn);background:var(--card)}
+.banner .grow{flex:1}
+.rv{padding:12px 0;border-bottom:1px solid var(--line)}.rv:last-of-type{border:0}
+.undobar{display:flex;justify-content:space-between;align-items:center;background:var(--soft);padding:8px 12px;border-radius:10px;margin:8px 0;font-size:.9rem}
+
+dialog form{position:relative}
+.sheetx{position:absolute;top:10px;right:12px;width:36px;height:36px;border-radius:50%;border:0;background:var(--soft);color:var(--mute);font-size:1rem;line-height:1}
+dialog h3{padding-right:44px}
+
+input.amount::-webkit-outer-spin-button,input.amount::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+input.amount{-moz-appearance:textfield;appearance:textfield}
+.chipbtn .pct{display:inline;padding:0;border:0;background:none;margin-left:2px}
+
+.del{background:none;border:0;color:var(--mute);font-size:1rem;padding:6px 10px;border-radius:8px}

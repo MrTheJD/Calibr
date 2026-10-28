@@ -27,7 +27,7 @@ jobs:
       - name: Stage site files
         run: |
           mkdir _site
-          rsync -a --exclude='.git' --exclude='.github' --exclude='tests' --exclude='_site' --exclude='*.md' ./ _site/
+          rsync -a --exclude='.git' --exclude='.github' --exclude='tests' --exclude='tools' --exclude='_site' --exclude='*.md' ./ _site/
       - uses: actions/upload-pages-artifact@v3
       - id: deployment
         uses: actions/deploy-pages@v4

@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Calibr</title>
+<meta name="theme-color" content="#0f766e">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header>
+  <button id="prev" aria-label="Previous month">‹</button>
+  <h1 id="month"></h1>
+  <button id="next" aria-label="Next month">›</button>
+</header>
+
+<main>
+  <section class="card summary">
+    <div class="left-label">Left this month</div>
+    <div class="left-amount" id="left"></div>
+    <div class="bar"><div id="total-bar"></div></div>
+    <div class="sub"><span id="spent"></span><span id="budget"></span></div>
+  </section>
+
+  <section>
+    <h2>Categories <button class="link" id="edit-cats">Edit</button></h2>
+    <ul id="cats" class="list"></ul>
+  </section>
+
+  <section>
+    <h2>Recent</h2>
+    <ul id="txns" class="list"></ul>
+  </section>
+</main>
+
+<button id="add" class="fab" aria-label="Add expense">+</button>
+
+<dialog id="expense-dialog">
+  <form method="dialog" id="expense-form">
+    <h3>Add expense</h3>
+    <input id="e-amount" type="number" inputmode="decimal" step="0.01" min="0.01" placeholder="0.00" required>
+    <select id="e-cat" required></select>
+    <input id="e-note" type="text" placeholder="Note (optional)" maxlength="60">
+    <input id="e-date" type="date" required>
+    <div class="actions">
+      <button value="cancel" formnovalidate>Cancel</button>
+      <button value="save" class="primary">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="cats-dialog">
+  <form method="dialog" id="cats-form">
+    <h3>Monthly limits</h3>
+    <div id="cat-rows"></div>
+    <button type="button" id="add-cat">+ Add category</button>
+    <div class="actions">
+      <button type="button" id="export">Export</button>
+      <button value="cancel" formnovalidate>Cancel</button>
+      <button value="save" class="primary">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>

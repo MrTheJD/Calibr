@@ -308,3 +308,131 @@ test('unconfirmed auto-filed list is recent and newest first', () => {
   ];
   assert.deepEqual(L.autoUnconfirmed(s, '2026-10-28').map(t => t.id), ['b', 'a']);
 });
+
+// ---------- variable income ----------
+const earn = (date, amount, extra = {}) => ({ id: L.uid(), type: 'income', amount, cat: null, note: '', date, ...extra });
+const varies = () => { const s = state(); s.settings.incomeMode = 'varies'; return s; };
+
+test('baseline income is the average of the lower half of recent months', () => {
+  const s = varies();
+  s.transactions = [earn('2026-04-10', 3000), earn('2026-05-10', 2000), earn('2026-06-10', 4000), earn('2026-07-10', 1800), earn('2026-08-10', 3500), earn('2026-09-10', 2500), earn('2026-10-05', 9999)];
+  // completed months before Oct: 1800, 2000, 2500, 3000, 3500, 4000 -> lowest 3 = 1800, 2000, 2500 -> 2100
+  assert.equal(L.baselineIncome(s, '2026-10'), 2100);
+  assert.equal(L.planIncome(s, '2026-10'), 0 || L.planIncome(s, '2026-10'));
+  assert.equal(L.planIncome(s, '2026-10'), 2100);
+});
+
+test('too little history falls back to the income the user entered; override wins', () => {
+  const s = varies();
+  s.settings.income = 1500;
+  s.transactions = [earn('2026-09-10', 2000)];
+  assert.equal(L.baselineIncome(s, '2026-10'), 0);
+  assert.equal(L.planIncome(s, '2026-10'), 1500);
+  s.settings.planOverride = 1200;
+  assert.equal(L.planIncome(s, '2026-10'), 1200);
+  s.settings.incomeMode = 'steady';
+  assert.equal(L.planIncome(s, '2026-10'), 1500, 'steady mode ignores history and override');
+});
+
+test('money moved out of the buffer is not counted as earnings', () => {
+  const s = varies();
+  s.transactions = [earn('2026-08-10', 2000), earn('2026-08-12', 500, { src: 'buffer' }), earn('2026-09-10', 3000)];
+  assert.deepEqual(L.incomeByMonth(s, '2026-10', 3).map(m => m.earned), [2000, 3000].length ? [0, 2000, 3000] : []);
+  const b = L.budgetFor(s, '2026-08');
+  assert.equal(b.income, 2500);
+  assert.equal(b.earned, 2000);
+  assert.equal(L.sanitize(JSON.parse(JSON.stringify(s))).transactions[1].src, 'buffer');
+});
+
+test('income status reports surplus and gap against the plan, net of what was moved to the buffer', () => {
+  const s = varies();
+  s.settings.planOverride = 2000;
+  s.transactions = [earn('2026-10-02', 2600)];
+  let st = L.incomeStatus(s, '2026-10');
+  assert.deepEqual([st.plan, st.earned, st.surplus, st.gap], [2000, 2600, 600, 0]);
+  s.settings.moved['2026-10'] = 400;
+  assert.equal(L.incomeStatus(s, '2026-10').surplus, 200);
+  s.transactions = [earn('2026-10-02', 1500)];
+  st = L.incomeStatus(s, '2026-10');
+  assert.deepEqual([st.surplus, st.gap], [0, 500]);
+});
+
+test('income stats describe how much pay varies', () => {
+  const s = varies();
+  assert.equal(L.incomeStats(s, '2026-10'), null);
+  s.transactions = [earn('2026-08-10', 1000), earn('2026-09-10', 3000)];
+  const st = L.incomeStats(s, '2026-10');
+  assert.deepEqual([st.min, st.max, st.avg, st.n], [1000, 3000, 2000, 2]);
+  assert.equal(st.spread, 1);
+});
+
+test('one-month limit overrides change that month only, including rollover maths', () => {
+  const s = state();
+  const g = s.categories.find(c => c.name === 'Groceries');
+  g.limit = 400; g.rollover = true; g.since = '2026-08';
+  s.overrides = { '2026-09': { [g.id]: 100 } };
+  assert.equal(L.budgetFor(s, '2026-09').cats.find(r => r.cat.id === g.id).limit, 100);
+  assert.equal(L.budgetFor(s, '2026-10').cats.find(r => r.cat.id === g.id).limit, 400);
+  assert.equal(L.budgetFor(s, '2026-09').cats.find(r => r.cat.id === g.id).adjusted, true);
+  // Aug: 400 unspent carries; Sep limit is 100 (not 400): carry into Oct = 400 + 100
+  assert.equal(L.budgetFor(s, '2026-10').cats.find(r => r.cat.id === g.id).carry, 500);
+  const t = L.sanitize(JSON.parse(JSON.stringify(s)));
+  assert.equal(t.overrides['2026-09'][g.id], 100);
+  t.categories = t.categories.filter(c => c.id !== g.id);
+  assert.equal(L.sanitize(JSON.parse(JSON.stringify(t))).overrides['2026-09'], undefined, 'overrides for deleted categories are dropped');
+});
+
+test('lean plan protects essentials and scales the rest to what is available', () => {
+  const s = state();
+  for (const c of s.categories) c.limit = 0;
+  const set = (n, v, ess) => { const c = s.categories.find(x => x.name === n); c.limit = v; c.essential = ess; };
+  set('Groceries', 500, true); set('Eating out', 200, false); set('Fun', 200, false);
+  let p = L.leanPlan(s, '2026-10', 1000);
+  assert.equal(p.factor, 1); // 500 essentials + 400 flexible fits in 1000
+  assert.equal(p.shortfall, 0);
+  p = L.leanPlan(s, '2026-10', 700);
+  assert.equal(p.eTot, 500); assert.equal(p.room, 200);
+  assert.equal(p.factor, 0.5);
+  assert.deepEqual(p.suggestions.map(x => x.to).sort(), [100, 100]);
+  p = L.leanPlan(s, '2026-10', 300);
+  assert.equal(p.factor, 0);
+  assert.equal(p.shortfall, 200, 'essentials alone are not covered');
+});
+
+test('presets mark essentials', () => {
+  const t = L.fromPresets(['Housing', 'Fun'], 3000);
+  assert.equal(t.find(c => c.name === 'Housing').essential, true);
+  assert.equal(t.find(c => c.name === 'Fun').essential, false);
+});
+
+test('buffer draws cover the gap to the plan but never count as earnings', () => {
+  const s = varies();
+  s.settings.planOverride = 2000;
+  s.transactions = [earn('2026-10-02', 800), earn('2026-10-03', 500, { src: 'buffer' })];
+  const st = L.incomeStatus(s, '2026-10');
+  assert.deepEqual([st.earned, st.drawn, st.gap, st.surplus], [800, 500, 700, 0]);
+});
+
+test('all departments of a big-box chain share one merchant key', () => {
+  for (const n of ['Walmart Supercenter', 'Walmart Pharmacy', 'Walmart Neighborhood Market', 'Wal-Mart #12']) assert.equal(L.merchantKey({ name: n }), 'walmart');
+  assert.equal(L.merchantKey({ name: "Sam's Club Optical" }), 'sams club');
+  assert.equal(L.merchantKey({ name: 'Harps Food Stores' }), 'harps food stores');
+});
+
+test('well-known fuel brands filed as convenience stores are treated as fuel stops', () => {
+  const s = state();
+  const idx = L.buildIndex(pack([poi('Murphy USA', 'grocery', 0.00003), poi('Corner Deli', 'grocery', 0.0004)]));
+  const r = L.suggest(s, fix(), idx);
+  assert.equal(r.ranked[0].catId, cat(s, 'Gas'));
+});
+
+test('backup reminder appears only when there is data worth protecting and no recent backup', () => {
+  const s = state();
+  assert.equal(L.backupDue(s, '2026-10-28'), false, 'little data');
+  s.transactions = Array.from({ length: 40 }, (_, i) => tx('2026-10-01', 5 + i, null));
+  assert.equal(L.backupDue(s, '2026-10-28'), true, 'never backed up');
+  s.settings.lastBackup = '2026-10-10';
+  assert.equal(L.backupDue(s, '2026-10-28'), false);
+  assert.equal(L.backupDue(s, '2026-11-15'), true);
+  assert.equal(L.sanitize(JSON.parse(JSON.stringify(s))).settings.lastBackup, '2026-10-10');
+});

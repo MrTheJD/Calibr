@@ -53,12 +53,13 @@ export const daysLeftInMonth = today => daysInMonth(monthOf(today)) - Number(tod
 // ---- state ----
 export const defaultState = () => ({
   v: 2,
-  settings: { currency: 'USD', income: 0, theme: 'auto', onboarded: false, lastCat: null, level: 'balanced', locate: true, lastAmount: 0, quickOpen: false },
+  settings: { currency: 'USD', income: 0, theme: 'auto', onboarded: false, lastCat: null, level: 'balanced', locate: true, lastAmount: 0, quickOpen: false, incomeMode: 'steady', planOverride: 0, moved: {}, lastBackup: '' },
   categories: [],
   transactions: [],
   recurring: [],
   goals: [],
   learn: { merchants: {}, spots: [], stats: { auto: 0, fixed: 0, confirmed: 0 } },
+  overrides: {}, // { 'YYYY-MM': { categoryId: limit } } for one-month changes
 });
 
 const CODES = new Set(CURRENCIES.map(c => c[0]));
@@ -84,6 +85,10 @@ export function sanitize(raw) {
     locate: st.locate !== false,
     lastAmount: Math.max(0, round2(num(st.lastAmount))),
     quickOpen: !!st.quickOpen,
+    incomeMode: st.incomeMode === 'varies' ? 'varies' : 'steady',
+    lastBackup: DATE.test(str(st.lastBackup)) ? st.lastBackup : '',
+    planOverride: Math.max(0, round2(num(st.planOverride))),
+    moved: Object.fromEntries(Object.entries(st.moved && typeof st.moved === 'object' ? st.moved : {}).filter(([k, v]) => MONTH.test(k) && num(v) > 0).map(([k, v]) => [k, round2(num(v))])),
   };
 
   s.categories = (Array.isArray(raw.categories) ? raw.categories : [])
@@ -93,6 +98,7 @@ export function sanitize(raw) {
       limit: Math.max(0, round2(num(c.limit))), rollover: !!c.rollover,
       since: MONTH.test(c.since) ? c.since : undefined,
       kind: KINDS.includes(c.kind) ? c.kind : undefined,
+      essential: !!c.essential,
     }));
   const catIds = new Set(s.categories.map(c => c.id));
 
@@ -105,6 +111,7 @@ export function sanitize(raw) {
         id: id(t.id), type: income ? 'income' : 'expense', amount: round2(num(t.amount)),
         cat: !income && catIds.has(t.cat) ? t.cat : null, note: str(t.note).trim().slice(0, 80), date: t.date,
         ...(t.rec ? { rec: str(t.rec) } : {}),
+        ...(income && t.src === 'buffer' ? { src: 'buffer' } : {}),
         ...(!income && t.status === 'review' ? { status: 'review', sugg: (Array.isArray(t.sugg) ? t.sugg : []).filter(x => catIds.has(x)).slice(0, 3) } : {}),
         ...(t.auto && !income && catIds.has(t.cat) ? { auto: true } : {}),
         ...(str(t.merchant) ? { merchant: str(t.merchant).slice(0, 80), mkey: str(t.mkey).slice(0, 80) } : {}),
@@ -129,7 +136,13 @@ export function sanitize(raw) {
     .map(g => ({
       id: id(g.id), emoji: str(g.emoji, '🎯') || '🎯', name: g.name.trim().slice(0, 40),
       target: round2(num(g.target)), saved: Math.max(0, round2(num(g.saved))), date: DATE.test(str(g.date)) ? g.date : '',
+      ...(g.buffer ? { buffer: true } : {}),
     }));
+  for (const [m, o] of Object.entries(raw.overrides && typeof raw.overrides === 'object' ? raw.overrides : {})) {
+    if (!MONTH.test(m) || !o || typeof o !== 'object') continue;
+    const clean = Object.fromEntries(Object.entries(o).filter(([c, v]) => catIds.has(c) && Number.isFinite(+v) && +v >= 0).map(([c, v]) => [c, round2(+v)]));
+    if (Object.keys(clean).length) s.overrides[m] = clean;
+  }
   const cleanCats = o => {
     const out = {};
     for (const [k, v] of Object.entries(o && typeof o === 'object' ? o : {})) if (catIds.has(k) && num(v) > 0) out[k] = Math.min(10000, Math.round(num(v)));
@@ -155,20 +168,20 @@ export function sanitize(raw) {
 export const migrate = sanitize;
 
 // ---- starter categories ----
-// [emoji, name, kind, % of income, picked by default]
+// [emoji, name, kind, % of income, picked by default, essential]
 export const PRESETS = [
-  ['🏠', 'Housing', '', 30, 0], ['🛒', 'Groceries', 'grocery', 12, 1], ['🍽️', 'Eating out', 'dining', 6, 1],
+  ['🏠', 'Housing', '', 30, 0, 1], ['🛒', 'Groceries', 'grocery', 12, 1, 1], ['🍽️', 'Eating out', 'dining', 6, 1],
   ['☕', 'Coffee', 'coffee', 2, 0], ['🚗', 'Transport', 'transport', 8, 1], ['⛽', 'Gas', 'fuel', 4, 0],
-  ['🛍️', 'Shopping', 'shopping', 5, 1], ['💊', 'Health', 'health', 4, 1], ['🎉', 'Fun', 'entertainment', 5, 1],
-  ['💡', 'Utilities', '', 6, 0], ['💪', 'Fitness', 'fitness', 2, 0], ['🐶', 'Pets', 'pets', 2, 0],
+  ['🛍️', 'Shopping', 'shopping', 5, 1], ['💊', 'Health', 'health', 4, 1, 1], ['🎉', 'Fun', 'entertainment', 5, 1],
+  ['💡', 'Utilities', '', 6, 0, 1], ['💪', 'Fitness', 'fitness', 2, 0], ['🐶', 'Pets', 'pets', 2, 0],
   ['💇', 'Personal care', 'personal', 3, 0], ['✈️', 'Travel', 'travel', 4, 0], ['🛠️', 'Home', 'home', 3, 0], ['🎓', 'Education', 'education', 3, 0],
 ];
 
 // Build categories from picked preset names, with limits suggested from income.
 export function fromPresets(names, income) {
   const step = income >= 2000 ? 10 : 5;
-  return PRESETS.filter(p => names.includes(p[1])).map(([emoji, name, kind, pct]) => ({
-    id: uid(), emoji, name, rollover: false, kind: kind || undefined,
+  return PRESETS.filter(p => names.includes(p[1])).map(([emoji, name, kind, pct, , essential]) => ({
+    id: uid(), emoji, name, rollover: false, kind: kind || undefined, essential: !!essential,
     limit: income > 0 ? Math.round((income * pct) / 100 / step) * step : 0,
   }));
 }
@@ -188,6 +201,10 @@ function indexSpending(s) {
   return idx;
 }
 
+/** Income that was actually earned (not money moved back out of the buffer). */
+export const isEarned = t => t.type === 'income' && t.src !== 'buffer';
+export const limitFor = (s, cat, key) => s.overrides?.[key]?.[cat.id] ?? cat.limit;
+
 export function budgetFor(s, key) {
   const idx = indexSpending(s);
   const spentIn = (m, c) => idx.get(`${m}|${c}`) || 0;
@@ -195,19 +212,21 @@ export function budgetFor(s, key) {
     let carry = 0;
     if (cat.rollover && cat.since && cat.since < key) {
       for (let m = cat.since, n = 0; m < key && n < 240; m = addMonths(m, 1), n++) {
-        carry = Math.max(0, cat.limit + carry - spentIn(m, cat.id));
+        carry = Math.max(0, limitFor(s, cat, m) + carry - spentIn(m, cat.id));
       }
     }
     const spent = round2(spentIn(key, cat.id));
-    const avail = round2(cat.limit + carry);
-    return { cat, carry: round2(carry), avail, spent, left: round2(avail - spent), pct: avail > 0 ? (spent / avail) * 100 : spent > 0 ? 100 : 0 };
+    const limit = limitFor(s, cat, key);
+    const avail = round2(limit + carry);
+    return { cat, limit, adjusted: limit !== cat.limit, carry: round2(carry), avail, spent, left: round2(avail - spent), pct: avail > 0 ? (spent / avail) * 100 : spent > 0 ? 100 : 0 };
   });
   const uncategorized = round2(spentIn(key, ''));
-  const limits = round2(s.categories.reduce((a, c) => a + c.limit, 0));
+  const limits = round2(s.categories.reduce((a, c) => a + limitFor(s, c, key), 0));
   const budget = round2(cats.reduce((a, c) => a + c.avail, 0));
   const spent = round2(cats.reduce((a, c) => a + c.spent, 0) + uncategorized);
   const income = round2(monthTx(s, key).filter(t => t.type === 'income').reduce((a, t) => a + t.amount, 0));
-  return { cats, uncategorized, limits, budget, spent, income, left: round2(budget - spent) };
+  const earned = round2(monthTx(s, key).filter(isEarned).reduce((a, t) => a + t.amount, 0));
+  return { cats, uncategorized, limits, budget, spent, income, earned, left: round2(budget - spent) };
 }
 
 export function trend(s, key, n = 6) {
@@ -292,15 +311,23 @@ const WALK_IN = { grocery: 1.2, dining: 1.2, coffee: 1.2, fuel: 1.2, shopping: 1
 
 // Stores whose receipts span several kinds of spending: never trust the brand alone.
 export const MULTI = [
-  [/walmart|wal-mart/i, { grocery: 0.5, shopping: 0.3, home: 0.2 }],
-  [/\btarget\b/i, { shopping: 0.5, grocery: 0.3, home: 0.2 }],
-  [/costco|sam'?s club|bj'?s wholesale/i, { grocery: 0.5, shopping: 0.3, fuel: 0.2 }],
-  [/\bcvs\b|walgreens|rite aid|duane reade/i, { health: 0.5, shopping: 0.3, grocery: 0.2 }],
+  [/walmart|wal-mart/i, { grocery: 0.5, shopping: 0.3, home: 0.2 }, 'walmart'],
+  [/\btarget\b/i, { shopping: 0.5, grocery: 0.3, home: 0.2 }, 'target'],
+  [/costco/i, { grocery: 0.5, shopping: 0.3, fuel: 0.2 }, 'costco'],
+  [/sam'?s club/i, { grocery: 0.5, shopping: 0.3, fuel: 0.2 }, 'sams club'],
+  [/bj'?s wholesale/i, { grocery: 0.5, shopping: 0.3, fuel: 0.2 }, 'bjs wholesale'],
+  [/\bcvs\b/i, { health: 0.5, shopping: 0.3, grocery: 0.2 }, 'cvs'],
+  [/walgreens|duane reade/i, { health: 0.5, shopping: 0.3, grocery: 0.2 }, 'walgreens'],
+  [/rite aid/i, { health: 0.5, shopping: 0.3, grocery: 0.2 }, 'rite aid'],
   [/7-eleven|7 eleven|circle k|wawa|sheetz|quiktrip|speedway|casey'?s/i, { fuel: 0.4, grocery: 0.35, coffee: 0.25 }],
 ];
 
 export const normName = s => String(s || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/['’`]/g, '').replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').replace(/ #?\d+$/, '').trim();
-export const merchantKey = p => normName(p.brand || p.name);
+// Departments and branches of the same chain (Walmart Pharmacy, Walmart Supercenter...) share one history.
+export const merchantKey = p => {
+  const m = MULTI.find(([re]) => re.test(`${p.brand || ''} ${p.name || ''}`));
+  return m?.[2] || normName(p.brand || p.name);
+};
 
 export function distanceM(lat1, lng1, lat2, lng2) {
   const dy = (lat2 - lat1) * 111320, dx = (lng2 - lng1) * 111320 * Math.cos(((lat1 + lat2) / 2) * Math.PI / 180);
@@ -309,13 +336,16 @@ export function distanceM(lat1, lng1, lat2, lng2) {
 
 // Pack format: { v:1, name, bbox:[w,s,e,n], kinds:[...], places:[[lat*1e5, lng*1e5, name, kindIndex, brand], ...] }
 const CELL = 0.002; // ~220 m
+const FUEL_BRANDS = /\b(murphy (usa|express)|shell|exxon|mobil|chevron|conoco|sinclair|valero|phillips 66|bp|texaco|marathon|citgo|sunoco|kum & go|pilot|flying j|love'?s travel)\b/i;
 export function buildIndex(pack) {
   const grid = new Map();
   let count = 0;
   for (const r of pack.places || []) {
-    const kind = pack.kinds?.[r[3]];
+    let kind = pack.kinds?.[r[3]];
     if (!kind) continue;
     const p = { lat: r[0] / 1e5, lng: r[1] / 1e5, name: String(r[2] || ''), kind, brand: r[4] ? String(r[4]) : '' };
+    // Map data often files fuel stops under "convenience store".
+    if ((kind === 'grocery' || kind === 'shopping' || kind === 'transport') && FUEL_BRANDS.test(`${p.brand} ${p.name}`)) p.kind = 'fuel';
     if (!p.name) continue;
     const k = `${Math.floor(p.lat / CELL)},${Math.floor(p.lng / CELL)}`;
     (grid.get(k) || grid.set(k, []).get(k)).push(p);
@@ -474,4 +504,65 @@ export function splitTx(s, tx, parts) {
   tx.amount = round2(parts[0].amount);
   s.transactions.splice(i + 1, 0, ...clones);
   return [tx, ...clones];
+}
+
+
+// ---- variable income ----
+/** Earned income for each of the `n` completed months before `key`, oldest first. */
+export function incomeByMonth(s, key, n = 6) {
+  const out = [];
+  for (let i = n; i >= 1; i--) {
+    const m = addMonths(key, -i);
+    out.push({ key: m, earned: round2(monthTx(s, m).filter(isEarned).reduce((a, t) => a + t.amount, 0)) });
+  }
+  return out;
+}
+
+/** A cautious "plan on" income from past months: the average of the lower half. 0 when there is too little history. */
+export function baselineIncome(s, key) {
+  const months = incomeByMonth(s, key, 6).map(m => m.earned).filter(v => v > 0).sort((a, b) => a - b);
+  if (months.length < 2) return 0;
+  const low = months.slice(0, Math.ceil(months.length / 2));
+  return Math.floor(low.reduce((a, b) => a + b, 0) / low.length / 10) * 10;
+}
+
+/** The income the budget is built on. */
+export function planIncome(s, key) {
+  const st = s.settings;
+  if (st.incomeMode !== 'varies') return st.income;
+  return st.planOverride > 0 ? st.planOverride : baselineIncome(s, key) || st.income;
+}
+
+export function incomeStats(s, key) {
+  const vals = incomeByMonth(s, key, 6).map(m => m.earned).filter(v => v > 0);
+  if (vals.length < 2) return null;
+  const min = Math.min(...vals), max = Math.max(...vals), avg = round2(vals.reduce((a, b) => a + b, 0) / vals.length);
+  return { n: vals.length, min, max, avg, spread: avg ? (max - min) / avg : 0 };
+}
+
+/** Where this month stands against the plan. surplus/gap are only positive when meaningful. */
+export function incomeStatus(s, key) {
+  const plan = planIncome(s, key), b = budgetFor(s, key), earned = b.earned, moved = s.settings.moved[key] || 0;
+  const drawn = round2(b.income - earned); // money brought back out of the buffer this month
+  return { plan, earned, drawn, moved, surplus: Math.max(0, round2(earned - plan - moved)), gap: Math.max(0, round2(plan - earned - drawn)) };
+}
+
+export const bufferGoal = s => s.goals.find(g => g.buffer);
+
+/** Suggested limits for a lean month: essentials are protected, flexible categories share what is left. */
+export function leanPlan(s, key, available) {
+  const eff = c => limitFor(s, c, key);
+  const ess = s.categories.filter(c => c.essential), flex = s.categories.filter(c => !c.essential);
+  const eTot = round2(ess.reduce((a, c) => a + eff(c), 0)), fTot = round2(flex.reduce((a, c) => a + eff(c), 0));
+  const room = round2(available - eTot);
+  const factor = fTot > 0 ? Math.min(1, Math.max(0, room / fTot)) : 1;
+  const suggestions = flex.filter(c => eff(c) > 0).map(c => ({ id: c.id, from: eff(c), to: factor >= 1 ? eff(c) : Math.floor((eff(c) * factor) / 5) * 5 }));
+  return { available, eTot, fTot, room, factor, shortfall: Math.max(0, -room), suggestions };
+}
+
+/** True when there is enough data worth protecting and no recent backup. */
+export function backupDue(s, today, days = 30) {
+  if (s.transactions.length < 30) return false;
+  const last = s.settings.lastBackup;
+  return !last || daysBetween(last, today) >= days;
 }

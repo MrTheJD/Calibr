@@ -1,0 +1,42 @@
+const { chromium } = require('playwright');
+const assert = require('assert');
+const BASE = process.env.BASE || 'http://localhost:8124/';
+(async () => {
+  const b = await chromium.launch();
+  const c = await b.newContext({ viewport: { width: 390, height: 844 }, locale: 'en-US', timezoneId: 'America/Chicago' });
+  const p = await c.newPage(); const errs = []; p.on('pageerror', e => errs.push(e.message));
+  await p.clock.install({ time: new Date('2026-11-20T12:00:00-06:00') });
+  await p.addInitScript(() => localStorage.getItem('calibr.v2') || localStorage.setItem('calibr.v2', JSON.stringify({ v: 2, settings: { onboarded: true, locate: false, income: 3000 }, categories: [{ id: 'g', emoji: '🛒', name: 'Groceries', limit: 400 }],
+    transactions: [['a', '2026-10-14', 10], ['b', '2026-10-15', 20], ['c', '2026-11-14', 30], ['d', '2026-11-15', 40]].map(([id, date, amount]) => ({ id, type: 'expense', amount, cat: 'g', date, note: id })) })));
+  await p.goto(BASE); await p.waitForSelector('.hero');
+  const spent = async () => (await p.locator('.hero .sub').first().innerText()).split('\n')[0];
+  assert((await p.locator('#month').innerText()).includes('November 2026'));
+  assert((await spent()).includes('$70.00'), 'calendar month: 30 + 40 = ' + await spent());
+  await p.click('[data-tab=settings]');
+  await p.selectOption('#s-start', '15');
+  await p.click('[data-tab=budget]');
+  assert.strictEqual(await p.locator('#month').innerText(), 'Nov 15 – Dec 14', 'header shows the pay period');
+  assert((await spent()).includes('$40.00'), 'current period holds only the purchase from the 15th: ' + await spent());
+  assert(/day/.test(await p.locator('.hero .hint').first().innerText()), 'a per-day figure is shown');
+  await p.click('[data-act=prev]');
+  assert.strictEqual(await p.locator('#month').innerText(), 'Oct 15 – Nov 14');
+  assert((await spent()).includes('$50.00'), 'Oct 15 - Nov 14 holds 20 + 30: ' + await spent());
+  await p.click('[data-act=prev]');
+  assert.strictEqual(await p.locator('#month').innerText(), 'Sep 15 – Oct 14');
+  assert((await spent()).includes('$10.00'));
+  await p.click('[data-act=thisMonth]');
+  assert.strictEqual(await p.locator('#month').innerText(), 'Nov 15 – Dec 14');
+  console.log('  ✓ a budget month starting on the 15th buckets purchases correctly and labels its range');
+  // adding a purchase dated in an earlier period jumps to that period
+  await p.click('#fab'); await p.waitForSelector('#sheet[open] [name=amount]'); await p.fill('[name=amount]', '5');
+  await p.click('#more summary'); await p.fill('[name=date]', '2026-11-03'); await p.click('.actions button[value=save]');
+  await p.waitForSelector('#sheet:not([open])', { state: 'attached' });
+  assert.strictEqual(await p.locator('#month').innerText(), 'Oct 15 – Nov 14');
+  console.log('  ✓ a purchase dated in another period takes you to that period');
+  await p.click('[data-tab=settings]'); await p.selectOption('#s-start', '1'); await p.click('[data-tab=budget]');
+  assert((await p.locator('#month').innerText()).includes('November 2026'));
+  assert((await spent()).includes('$75.00'), 'back to calendar months: 30 + 40 + 5 = ' + await spent());
+  console.log('  ✓ switching back to calendar months restores them');
+  assert.deepStrictEqual(errs, []);
+  await b.close(); console.log('PAYDAY OK');
+})().catch(e => { console.error('FAIL', e.message.split('\n')[0]); process.exit(1); });

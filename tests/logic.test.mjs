@@ -548,3 +548,59 @@ test('absurd amounts are capped so they cannot break the layout', () => {
     transactions: [{ id: 't', type: 'expense', amount: 1e18, cat: 'a', date: '2026-10-01' }], goals: [{ id: 'g', name: 'G', target: 1e25, saved: 1e22 }] });
   for (const v of [s.settings.income, s.settings.planOverride, s.settings.lastAmount, s.categories[0].limit, s.transactions[0].amount, s.goals[0].target, s.goals[0].saved]) assert.equal(v, L.MAX_MONEY);
 });
+
+// ---------- payday-aligned budget months ----------
+const payday = (day = 15) => { const s = state(); s.settings.startDay = day; return s; };
+
+test('a calendar month is the default and nothing changes', () => {
+  const s = state();
+  assert.equal(s.settings.startDay, 1);
+  assert.equal(L.periodOf(s, '2026-10-31'), '2026-10');
+  assert.deepEqual(L.periodBounds(s, '2026-10'), { start: '2026-10-01', end: '2026-10-31' });
+  assert.equal(L.daysLeftInPeriod(s, '2026-10-28'), L.daysLeftInMonth('2026-10-28'));
+});
+
+test('with a 15th start, a period runs from the 15th to the 14th and is named for the month it starts in', () => {
+  const s = payday(15);
+  assert.equal(L.periodOf(s, '2026-10-14'), '2026-09');
+  assert.equal(L.periodOf(s, '2026-10-15'), '2026-10');
+  assert.equal(L.periodOf(s, '2026-11-14'), '2026-10');
+  assert.equal(L.periodOf(s, '2026-01-03'), '2025-12', 'crosses the year boundary');
+  assert.deepEqual(L.periodBounds(s, '2026-10'), { start: '2026-10-15', end: '2026-11-14' });
+  assert.deepEqual(L.periodBounds(s, '2026-12'), { start: '2026-12-15', end: '2027-01-14' });
+  assert.equal(L.periodLength(s, '2026-10'), 31);
+  assert.equal(L.periodLength(s, '2027-02'), 28); // Feb 15 .. Mar 14
+  assert.equal(L.daysLeftInPeriod(s, '2026-11-10'), 5);
+  assert.equal(L.daysLeftInPeriod(s, '2026-11-14'), 1);
+  assert.equal(L.daysLeftInPeriod(s, '2026-11-15'), 30);
+});
+
+test('spending and income are bucketed by period, and every day belongs to exactly one', () => {
+  const s = payday(15);
+  const g = cat(s, 'Groceries');
+  s.transactions = [tx('2026-10-14', 10, g), tx('2026-10-15', 20, g), tx('2026-11-14', 30, g), tx('2026-11-15', 40, g), tx('2026-10-20', 1000, null, 'income')];
+  assert.equal(L.budgetFor(s, '2026-09').spent, 10);
+  assert.equal(L.budgetFor(s, '2026-10').spent, 50);
+  assert.equal(L.budgetFor(s, '2026-11').spent, 40);
+  assert.equal(L.budgetFor(s, '2026-10').income, 1000);
+  assert.equal(L.budgetFor(s, '2026-11').income, 0);
+  // no transaction is lost or double counted across periods
+  const total = ['2026-08', '2026-09', '2026-10', '2026-11', '2026-12'].reduce((a, k) => a + L.monthTx(s, k).length, 0);
+  assert.equal(total, s.transactions.length);
+  for (let d = 1; d <= 365; d++) { const day = L.addDays('2026-01-01', d - 1); const k = L.periodOf(s, day); const b = L.periodBounds(s, k); assert.ok(day >= b.start && day <= b.end, `${day} inside its period ${k}`); }
+});
+
+test('rollover and baseline income follow periods too', () => {
+  const s = payday(10);
+  const f = s.categories.find(c => c.name === 'Fun'); f.rollover = true; f.since = '2026-08'; f.limit = 50;
+  s.transactions = [tx('2026-09-09', 20, f.id)]; // belongs to period 2026-08 (Aug 10 .. Sep 9)
+  assert.equal(L.budgetFor(s, '2026-09').cats.find(r => r.cat.id === f.id).carry, 30);
+  s.settings.incomeMode = 'varies';
+  s.transactions = [tx('2026-06-12', 2000, null, 'income'), tx('2026-07-09', 500, null, 'income'), tx('2026-07-12', 3000, null, 'income')];
+  // periods: 2026-06 (Jun10-Jul9) = 2500, 2026-07 (Jul10-Aug9) = 3000
+  assert.deepEqual(L.incomeByMonth(s, '2026-09', 3).map(m => m.earned), [2500, 3000, 0]);
+});
+
+test('startDay is validated', () => {
+  for (const [input, want] of [[15, 15], ['20', 20], [0, 1], [29, 1], [-3, 1], [2.5, 1], ['x', 1], [undefined, 1]]) assert.equal(L.sanitize({ settings: { startDay: input } }).settings.startDay, want, String(input));
+});

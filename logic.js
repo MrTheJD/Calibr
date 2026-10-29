@@ -591,3 +591,11 @@ export function fundingFor(s, key) {
   }
   return { byId, unfunded: round2(Object.values(byId).reduce((a, x) => a + x.short, 0)), pool: Math.max(0, pool) };
 }
+
+/** True when a new expense is far above what this user usually spends (likely a slipped decimal). */
+export function looksTooBig(s, amount) {
+  const recent = s.transactions.filter(t => t.type === 'expense').slice(-40).map(t => t.amount).sort((a, b) => a - b);
+  if (recent.length < 10 || amount < 200) return null;
+  const median = recent[Math.floor(recent.length / 2)];
+  return amount >= median * 8 ? { median } : null;
+}

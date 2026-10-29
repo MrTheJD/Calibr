@@ -855,7 +855,7 @@ function render() {
   $('fab').hidden = !['budget', 'activity', 'insights'].includes(ui.tab);
   document.querySelectorAll('#nav button').forEach(b => { b.classList.toggle('on', b.dataset.tab === ui.tab); b.setAttribute('aria-current', b.dataset.tab === ui.tab ? 'page' : 'false'); });
   document.querySelector('#nav [data-tab=budget]').dataset.badge = L.reviewList(S).length || '';
-  $('view').innerHTML = views[ui.tab]();
+  $('view').innerHTML = (monthTab ? `<h1 class="vh">${{ budget: 'Budget', activity: 'Activity', insights: 'Insights' }[ui.tab]} for ${monthLabel(ui.month)}</h1>` : '') + views[ui.tab]();
   applyTheme();
 }
 

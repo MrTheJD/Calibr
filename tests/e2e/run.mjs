@@ -27,18 +27,24 @@ const out = fs.mkdtempSync(path.join(os.tmpdir(), 'calibr-e2e-'));
 
 const wanted = process.argv.slice(2);
 const files = fs.readdirSync(here).filter(f => f.endsWith('.cjs') && (!wanted.length || wanted.includes(f.replace('.cjs', ''))));
+const CONCURRENCY = Math.max(1, Number(process.env.E2E_CONCURRENCY || 3));
 let failed = 0; const flaky = [];
-const run = f => new Promise(r => spawn(process.execPath, [path.join(here, f)], { stdio: 'inherit', env: { ...process.env, BASE: base, OUT: out } }).on('exit', r));
-for (const f of files) {
-  let code = await run(f);
-  if (code !== 0) { // one retry: a real bug fails twice, a timing hiccup on a slow machine usually doesn't
-    console.log(`FAIL ${f} (retrying once)\n`);
-    code = await run(f);
-    if (code === 0) flaky.push(f);
-  }
-  console.log(`${code === 0 ? 'PASS' : 'FAIL'} ${f}\n`);
-  if (code !== 0) failed++;
-}
+// Each suite launches its own browser and talks to the shared static server, so they can safely run side by side.
+// Output is buffered per suite so the log stays readable.
+const run = f => new Promise(r => {
+  const chunks = [];
+  const child = spawn(process.execPath, [path.join(here, f)], { env: { ...process.env, BASE: base, OUT: out } });
+  child.stdout.on('data', d => chunks.push(d)); child.stderr.on('data', d => chunks.push(d));
+  child.on('exit', code => r({ code, log: Buffer.concat(chunks).toString() }));
+});
+const runWithRetry = async f => {
+  let res = await run(f), retried = false;
+  if (res.code !== 0) { retried = true; const first = res; res = await run(f); res.log = `${first.log}FAIL ${f} (retrying once)\n${res.log}`; if (res.code === 0) flaky.push(f); }
+  process.stdout.write(`${res.log}${res.code === 0 ? 'PASS' : 'FAIL'} ${f}${retried && res.code === 0 ? ' (passed on retry)' : ''}\n\n`);
+  if (res.code !== 0) failed++;
+};
+const queue = [...files];
+await Promise.all(Array.from({ length: Math.min(CONCURRENCY, queue.length) }, async () => { while (queue.length) await runWithRetry(queue.shift()); }));
 if (flaky.length) console.log(`::warning::flaky suites that passed on retry: ${flaky.join(', ')}`);
 server.close();
 console.log(failed ? `${failed} of ${files.length} e2e suites failed (screenshots in ${out})` : `all ${files.length} e2e suites passed`);

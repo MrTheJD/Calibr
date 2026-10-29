@@ -942,7 +942,7 @@ function txList() {
   for (const t of txs) (groups.get(t.date) ?? groups.set(t.date, []).get(t.date)).push(t);
   return [...groups].map(([d, list]) => {
     const net = list.reduce((a, t) => a + (t.type === 'income' ? t.amount : -t.amount), 0);
-    return `<div class="dayhead"><span>${prettyDate(d)}</span><span>${net < 0 ? '−' : '+'}${money(Math.abs(net))}</span></div><ul class="list" style="border-radius:0;border-top:0">${list.map(txRow).join('')}</ul>`;
+    return `<div class="dayhead"><span>${prettyDate(d)}</span><span>${net < 0 ? '−' : '+'}${money(Math.abs(net))}</span></div><ul class="list">${list.map(txRow).join('')}</ul>`;
   }).join('');
 }
 

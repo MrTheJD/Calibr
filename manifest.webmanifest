@@ -1,1 +1,18 @@
-{"name":"Calibr","short_name":"Calibr","start_url":".","display":"standalone","background_color":"#f6f7f6","theme_color":"#0f766e","icons":[{"src":"icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}]}
+{
+  "name": "Calibr",
+  "short_name": "Calibr",
+  "description": "A simple, private budgeting app.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f4f6f5",
+  "theme_color": "#0f766e",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Add transaction", "short_name": "Add", "url": "./?add=1" }
+  ]
+}

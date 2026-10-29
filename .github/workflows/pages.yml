@@ -22,10 +22,12 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      - name: Run tests
+        run: node --test tests/*.test.mjs
       - name: Stage site files
         run: |
           mkdir _site
-          cp index.html styles.css app.js sw.js manifest.webmanifest icon.svg _site/
+          rsync -a --exclude='.git' --exclude='.github' --exclude='tests' --exclude='tools' --exclude='_site' --exclude='*.md' ./ _site/
       - uses: actions/upload-pages-artifact@v3
       - id: deployment
         uses: actions/deploy-pages@v4

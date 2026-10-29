@@ -29,7 +29,7 @@ const state = { v: 2, settings: { onboarded: true, locate: false, incomeMode: 'v
     await p.click('[data-act=cat] >> nth=0'); await p.click('[data-act=editcat]'); await check('edit category'); await p.keyboard.press('Escape');
     await p.click('[data-tab=goals]'); await p.click('[data-act=fund]'); await check('fund goal'); await p.keyboard.press('Escape');
     await p.click('[data-tab=settings]'); await p.click('[data-act=addrec]'); await check('recurring'); await p.keyboard.press('Escape');
-    await p.click('[data-act=diag]'); await check('diag'); await p.keyboard.press('Escape');
+    await p.evaluate(() => { const d = document.getElementById('places-details'); if (d) d.open = true; }); await p.click('[data-act=diag]'); await check('diag'); await p.keyboard.press('Escape');
     await p.click('[data-tab=activity]'); await p.locator('#txlist li:has-text("Walmart")').click(); await check('edit tx'); await p.click('[data-act=split]'); await check('split');
   }
   await b.close();

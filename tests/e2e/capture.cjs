@@ -121,7 +121,7 @@ const AMBIG = { latitude: 40.74453, longitude: -73.99686, accuracy: 12 };
   await p.locator('#txlist li:has-text("📍 auto")').click();
   await p.locator('label:has-text("Eating out") span').click();
   await p.click('.actions button[value=save]');
-  await p.click('[data-tab=settings]');
+  await p.click('[data-tab=settings]'); await p.evaluate(() => { const d = document.getElementById('places-details'); if (d) d.open = true; });
   assert((await txt('#view')).includes('2 · 1 confirmed · 1 fixed'), (await txt('#view')).slice(0, 1100));
   assert((await txt('#view')).includes('Midtown Manhattan (demo)'), 'pack status shown');
   step('confirmations and corrections of auto-filed entries are counted; pack status shown');

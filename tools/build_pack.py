@@ -173,7 +173,7 @@ def main():
     idx_path = os.path.join(a.out, 'index.json')
     idx = json.load(open(idx_path)) if os.path.exists(idx_path) else {'v': 1, 'packs': []}
     idx['packs'] = [p for p in idx['packs'] if p['name'] != a.name] + [
-        {'name': a.name, 'label': label, 'bbox': bbox, 'file': a.name + '.json', 'places': len(places), 'bytes': size, 'built': pack['built']}]
+        {'name': a.name, 'label': label, 'bbox': bbox, 'file': a.name + '.json', 'places': len(places), 'bytes': size, 'built': pack['built'], 'release': rel}]
     json.dump(idx, open(idx_path, 'w'), indent=1)
     print(f'wrote {path}: {len(places)} places, {size/1024:.0f} KB (about {size/4/1024:.0f} KB gzipped)', file=sys.stderr)
 

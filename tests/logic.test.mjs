@@ -444,3 +444,19 @@ test('time of day breaks ties between stacked places: coffee in the morning, din
   assert.equal(evening.ranked[0].catId, cat(s, 'Eating out'));
   assert.ok(unknown.ranked.length >= 2);
 });
+
+test('funding goes to essentials first, then the rest in order', () => {
+  const s = state();
+  for (const c of s.categories) c.limit = 0;
+  const set = (n, v, ess) => { const c = s.categories.find(x => x.name === n); c.limit = v; c.essential = ess; };
+  set('Eating out', 200, false); set('Groceries', 400, true); set('Fun', 100, false);
+  s.transactions = [earn('2026-10-02', 500)];
+  let f = L.fundingFor(s, '2026-10');
+  assert.deepEqual([f.byId[cat(s, 'Groceries')].funded, f.byId[cat(s, 'Eating out')].funded, f.byId[cat(s, 'Fun')].funded], [400, 100, 0]);
+  assert.equal(f.byId[cat(s, 'Fun')].short, 100);
+  assert.equal(f.unfunded, 200);
+  s.transactions.push(earn('2026-10-03', 400, { src: 'buffer' }));
+  f = L.fundingFor(s, '2026-10');
+  assert.equal(f.unfunded, 0, 'buffer draws count as money in hand');
+  assert.equal(f.pool, 200);
+});

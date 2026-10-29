@@ -30,7 +30,10 @@ const seed = (extra = {}) => ({ v: 2, settings: { onboarded: true, locate: false
   assert(hero.includes('Plan $2,100.00') && hero.includes('received $1,200.00'), hero);
   assert(hero.includes('$900.00 to go to reach your plan'), hero);
   assert(hero.includes('Essentials $1,300.00') && hero.includes('$100.00 still to cover'), hero);
-  step('plans on the average of the lower half of recent months ($2,100), shows received so far');
+  const rowsTxt = await text(p, '#view');
+  assert(/Groceries[\s\S]*\$100\.00 not funded yet/.test(rowsTxt), 'partially funded essential: ' + rowsTxt.slice(0, 900));
+  assert(/Eating out[\s\S]*not funded yet/.test(rowsTxt) && !/Housing[\s\S]{0,60}not funded yet/.test(rowsTxt.split('Groceries')[0]), 'flexible categories wait; housing is funded');
+  step('plans on the average of the lower half of recent months ($2,100), shows received so far, and which categories are funded');
 
   await p.click('[data-act=lean]');
   await p.waitForSelector('#leanout');
@@ -52,11 +55,11 @@ const seed = (extra = {}) => ({ v: 2, settings: { onboarded: true, locate: false
   await p.click('[data-act=prev]');
 
   // per-category month limit + reset
-  await p.click('[data-act=cat]:has-text("Fun")');
+  await p.click('[data-act=cat]:has(.title:text-is("Fun"))');
   await p.click('[data-act=monthlimit]');
   await p.fill('[name=limit]', '50');
   await p.click('.actions button[value=save]');
-  assert((await text(p, '[data-act=cat]:has-text("Fun")')).includes('of $50.00'));
+  { const ft = await text(p, '[data-act=cat]:has(.title:text-is("Fun"))'); assert(ft.includes('of $50.00'), 'fun row: ' + ft + ' | overrides: ' + await p.evaluate(() => JSON.stringify(JSON.parse(localStorage.getItem('calibr.v2')).overrides)) + ' | sheet open: ' + await p.evaluate(() => document.getElementById('sheet').open)); }
   await p.click('[data-act=lean]');
   await p.click('.actions button[value=reset]');
   await p.waitForSelector('#sheet:not([open])', { state: 'attached' });

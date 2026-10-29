@@ -696,6 +696,7 @@ const views = {
         ? `<span>Income ${money(inc)}</span>${unassignedTxt}`
         : `<button class="link small" data-act="tab" data-tab="settings">Set your monthly income →</button><span></span>`;
     }
+    const FUND = varies && cur && IS.earned + IS.drawn > 0 ? L.fundingFor(S, ui.month) : null;
     const upcoming = cur ? L.upcoming(S, today, 14) : [];
     const nReview = L.reviewList(S).length;
     const nAuto = L.autoUnconfirmed(S, today).length;
@@ -714,7 +715,7 @@ const views = {
       <h2>Categories</h2>
       <ul class="list">${B.cats.map(r => `<li><button class="rowbtn" data-act="cat" data-id="${r.cat.id}">
         <div class="row"><span class="emoji">${r.cat.emoji}</span><span class="grow"><div class="title">${esc(r.cat.name)}</div>
-        <div class="small mute">${money(r.spent)} of ${money(r.avail)}${r.carry > 0 ? ` · +${money(r.carry)} carried` : ''}${r.adjusted ? ' · adjusted' : ''}</div></span>
+        <div class="small mute">${money(r.spent)} of ${money(r.avail)}${r.carry > 0 ? ` · +${money(r.carry)} carried` : ''}${r.adjusted ? ' · adjusted' : ''}${FUND && FUND.byId[r.cat.id].short > 0 ? ` · <span class="warn">${FUND.byId[r.cat.id].funded > 0 ? `${money(FUND.byId[r.cat.id].short)} not funded yet` : 'not funded yet'}</span>` : ''}</div></span>
         <span class="amt ${r.left < 0 ? 'over' : ''}"><b>${money(Math.abs(r.left))}</b> <span class="mute small">${r.left < 0 ? 'over' : 'left'}</span></span></div>${bar(r.pct, 'thin')}</button></li>`).join('')}
         ${B.uncategorized > 0 ? `<li><div class="rowbtn"><div class="row"><span class="emoji">❔</span><span class="grow"><div class="title">${L.reviewList(S).length ? 'Needs a category' : 'Uncategorized'}</div><div class="small mute">Counted in your total, not in a category</div></span><span class="amt">${money(B.uncategorized)}</span></div></div></li>` : ''}
       </ul>

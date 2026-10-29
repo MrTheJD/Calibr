@@ -53,7 +53,7 @@ export const daysLeftInMonth = today => daysInMonth(monthOf(today)) - Number(tod
 // ---- state ----
 export const defaultState = () => ({
   v: 2,
-  settings: { currency: 'USD', income: 0, theme: 'auto', onboarded: false, lastCat: null, level: 'balanced', locate: true, lastAmount: 0, quickOpen: false, incomeMode: 'steady', planOverride: 0, moved: {}, lastBackup: '', installDismissed: false },
+  settings: { currency: 'USD', income: 0, theme: 'auto', onboarded: false, lastCat: null, level: 'balanced', locate: true, lastAmount: 0, quickOpen: false, incomeMode: 'steady', planOverride: 0, moved: {}, lastBackup: '', installDismissed: false, dismissedRecurring: [] },
   categories: [],
   transactions: [],
   recurring: [],
@@ -88,6 +88,7 @@ export function sanitize(raw) {
     incomeMode: st.incomeMode === 'varies' ? 'varies' : 'steady',
     lastBackup: DATE.test(str(st.lastBackup)) ? st.lastBackup : '',
     installDismissed: !!st.installDismissed,
+    dismissedRecurring: (Array.isArray(st.dismissedRecurring) ? st.dismissedRecurring : []).filter(x => typeof x === 'string').slice(-100),
     planOverride: Math.max(0, round2(num(st.planOverride))),
     moved: Object.fromEntries(Object.entries(st.moved && typeof st.moved === 'object' ? st.moved : {}).filter(([k, v]) => MONTH.test(k) && num(v) > 0).map(([k, v]) => [k, round2(num(v))])),
   };
@@ -598,4 +599,43 @@ export function looksTooBig(s, amount) {
   if (recent.length < 10 || amount < 200) return null;
   const median = recent[Math.floor(recent.length / 2)];
   return amount >= median * 8 ? { median } : null;
+}
+
+/**
+ * Spots purchases that repeat on a regular schedule (the same name or place, about the same amount, roughly
+ * weekly or monthly) and are not already set up as recurring. Returns suggestions, strongest first.
+ */
+export function detectRecurring(s, today) {
+  const label = t => normName(t.note || t.merchant || '');
+  const known = new Set([...s.recurring.map(r => normName(r.note)), ...s.settings.dismissedRecurring]);
+  const groups = new Map();
+  for (const t of s.transactions) {
+    if (t.type !== 'expense' || t.rec) continue;
+    const k = label(t);
+    if (k.length < 2 || known.has(k)) continue;
+    (groups.get(k) ?? groups.set(k, []).get(k)).push(t);
+  }
+  const out = [];
+  for (const [key, list] of groups) {
+    const txs = list.slice().sort((a, b) => a.date.localeCompare(b.date));
+    if (txs.length < 3) continue;
+    const amounts = txs.map(t => t.amount), avg = amounts.reduce((a, b) => a + b, 0) / amounts.length;
+    if (amounts.some(a => Math.abs(a - avg) > avg * 0.06)) continue; // same amount each time
+    const gaps = txs.slice(1).map((t, i) => daysBetween(txs[i].date, t.date));
+    if (gaps.some(g => g < 5)) continue;
+    const near = (g, d, tol) => Math.abs(g - d) <= tol;
+    let freq = null;
+    if (gaps.every(g => near(g, 7, 1))) freq = 'weekly';
+    else if (gaps.every(g => near(g, 14, 2))) freq = 'biweekly';
+    else if (gaps.every(g => near(g, 30.5, 4))) freq = 'monthly';
+    if (!freq) continue;
+    const last = txs[txs.length - 1];
+    if (daysBetween(last.date, today) > (freq === 'monthly' ? 50 : 25)) continue; // stopped repeating
+    const anchor = Number(last.date.slice(8));
+    const base = { freq, anchor };
+    const next = advance(base, last.date);
+    const first = txs[0];
+    out.push({ key, note: (last.note || last.merchant).slice(0, 80), amount: round2(avg), cat: last.cat || null, freq, next, count: txs.length, anchor, merchant: last.merchant, first: first.date });
+  }
+  return out.sort((a, b) => b.count - a.count).slice(0, 3);
 }

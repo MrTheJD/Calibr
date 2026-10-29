@@ -20,6 +20,7 @@ A simple, private budgeting app. Set a monthly limit for each category, log what
 - **Received vs plan.** The Budget screen shows what has arrived this month. Above plan: "Save it in your buffer". Below: how much is still to come, with a lean-month planner and a "Use buffer" button.
 - **Income buffer.** A goal that absorbs surplus. Money drawn back out is logged as income marked "From buffer": it covers the gap to the plan but is never counted as earnings, so it can't inflate future plans.
 - **Lean month.** Mark categories *Essential*; in a lean month they stay fully funded and the rest shrink proportionally to the money you tell Calibr you can count on. This only changes that month and can be reset. You can also change any single category's limit for one month from its detail screen.
+- **Funded or not.** Money received so far is allocated to essentials first, then the rest in order, and any category it doesn't reach yet is marked "not funded yet" so you know what is safe to spend from.
 - **Insights** show how much your pay varies and offer to switch a steady-pay setup to variable planning when the history is bumpy.
 
 ## Smart capture

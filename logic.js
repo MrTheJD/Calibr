@@ -575,3 +575,18 @@ export function backupDue(s, today, days = 30) {
   const last = s.settings.lastBackup;
   return !last || daysBetween(last, today) >= days;
 }
+
+/** How far the money received so far stretches: essentials are funded first, then the rest, in list order. */
+export function fundingFor(s, key) {
+  const b = budgetFor(s, key);
+  let pool = round2(b.earned + round2(b.income - b.earned)); // earned income plus anything drawn from the buffer
+  const byId = {};
+  const order = [...s.categories.filter(c => c.essential), ...s.categories.filter(c => !c.essential)];
+  for (const c of order) {
+    const need = limitFor(s, c, key);
+    const funded = Math.min(need, Math.max(0, pool));
+    pool = round2(pool - funded);
+    byId[c.id] = { need, funded: round2(funded), short: round2(need - funded) };
+  }
+  return { byId, unfunded: round2(Object.values(byId).reduce((a, x) => a + x.short, 0)), pool: Math.max(0, pool) };
+}

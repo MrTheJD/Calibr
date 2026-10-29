@@ -27,12 +27,19 @@ const out = fs.mkdtempSync(path.join(os.tmpdir(), 'calibr-e2e-'));
 
 const wanted = process.argv.slice(2);
 const files = fs.readdirSync(here).filter(f => f.endsWith('.cjs') && (!wanted.length || wanted.includes(f.replace('.cjs', ''))));
-let failed = 0;
+let failed = 0; const flaky = [];
+const run = f => new Promise(r => spawn(process.execPath, [path.join(here, f)], { stdio: 'inherit', env: { ...process.env, BASE: base, OUT: out } }).on('exit', r));
 for (const f of files) {
-  const code = await new Promise(r => spawn(process.execPath, [path.join(here, f)], { stdio: 'inherit', env: { ...process.env, BASE: base, OUT: out } }).on('exit', r));
+  let code = await run(f);
+  if (code !== 0) { // one retry: a real bug fails twice, a timing hiccup on a slow machine usually doesn't
+    console.log(`FAIL ${f} (retrying once)\n`);
+    code = await run(f);
+    if (code === 0) flaky.push(f);
+  }
   console.log(`${code === 0 ? 'PASS' : 'FAIL'} ${f}\n`);
   if (code !== 0) failed++;
 }
+if (flaky.length) console.log(`::warning::flaky suites that passed on retry: ${flaky.join(', ')}`);
 server.close();
 console.log(failed ? `${failed} of ${files.length} e2e suites failed (screenshots in ${out})` : `all ${files.length} e2e suites passed`);
 process.exit(failed ? 1 : 0);

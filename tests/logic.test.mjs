@@ -436,3 +436,11 @@ test('backup reminder appears only when there is data worth protecting and no re
   assert.equal(L.backupDue(s, '2026-11-15'), true);
   assert.equal(L.sanitize(JSON.parse(JSON.stringify(s))).settings.lastBackup, '2026-10-10');
 });
+
+test('time of day breaks ties between stacked places: coffee in the morning, dinner in the evening', () => {
+  const s = state(), idx = L.buildIndex(pack([poi('Joe Coffee', 'coffee', 0.00003), poi('Bistro', 'dining', -0.00003)]));
+  const morning = L.suggest(s, fix(20), idx, 0, 8), evening = L.suggest(s, fix(20), idx, 0, 19), unknown = L.suggest(s, fix(20), idx, 0);
+  assert.equal(morning.ranked[0].catId, cat(s, 'Coffee'));
+  assert.equal(evening.ranked[0].catId, cat(s, 'Eating out'));
+  assert.ok(unknown.ranked.length >= 2);
+});

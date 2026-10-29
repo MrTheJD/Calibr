@@ -13,7 +13,7 @@ const cats = [
 ];
 const hist = [3000, 2000, 4000, 1800, 3500, 2500]; // 6 completed months, oldest first
 const seed = (extra = {}) => ({ v: 2, settings: { onboarded: true, locate: false, incomeMode: 'varies', currency: 'USD', ...(extra.settings || {}) }, categories: cats,
-  transactions: [...hist.map((a, i) => ({ id: 'i' + i, type: 'income', amount: a, date: monthKey(i - 6) + '-10', note: 'pay' })), ...(extra.tx || [])], goals: extra.goals || [] });
+  transactions: [...hist.map((a, i) => ({ id: 'i' + i, type: 'income', amount: a, date: monthKey(i - 6) + '-10', note: 'pay' })), ...(extra.tx || [])], goals: extra.goals || [], recurring: extra.recurring || [] });
 (async () => {
   const b = await chromium.launch();
   const step = n => console.log('  ✓', n);
@@ -21,7 +21,11 @@ const seed = (extra = {}) => ({ v: 2, settings: { onboarded: true, locate: false
   const text = (p, sel) => p.locator(sel).first().innerText();
 
   // ---- scenario 1: lean month then a windfall
-  let p = await mk(seed({ tx: [{ id: 'now', type: 'income', amount: 1200, date: today, note: 'week 1' }] }));
+  const inDays = n => { const d = new Date(); d.setDate(d.getDate() + n); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
+  let p = await mk(seed({ tx: [{ id: 'now', type: 'income', amount: 1200, date: today, note: 'week 1' }], recurring: [
+    { id: 'r1', type: 'expense', amount: 900, cat: 'h', note: 'Rent', freq: 'monthly', next: inDays(3), anchor: 1 }, { id: 'r2', type: 'expense', amount: 60.5, cat: 'e', note: 'Phone', freq: 'monthly', next: inDays(5), anchor: 1 },
+    { id: 'r3', type: 'income', amount: 700, cat: null, note: 'Gig payout', freq: 'weekly', next: inDays(2), anchor: 1 }] }));
+  assert((await text(p, 'h2:has-text("Coming up")')).toLowerCase().includes('$960.50 due · $700.00 expected'), await text(p, 'h2:has-text("Coming up")'));
   let hero = await text(p, '.hero');
   assert(hero.includes('Plan $2,100.00') && hero.includes('received $1,200.00'), hero);
   assert(hero.includes('$900.00 to go to reach your plan'), hero);

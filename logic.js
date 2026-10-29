@@ -71,7 +71,11 @@ export function sanitize(raw) {
   const num = (x, d = 0) => (Number.isFinite(+x) ? +x : d);
   const str = (x, d = '') => (typeof x === 'string' ? x : d);
   const seen = new Set();
-  const id = x => { let v = str(x) || uid(); while (seen.has(v)) v = uid(); seen.add(v); return v; };
+  // Ids end up in HTML attributes, so only a safe alphabet is allowed (references are cleaned the same way).
+  const cid = x => str(x).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 40);
+  const id = x => { let v = cid(x) || uid(); while (seen.has(v)) v = uid(); seen.add(v); return v; };
+  // A single emoji-like character: nothing that could be markup.
+  const glyph = (x, d) => { const t = str(x).trim(); let g; try { g = [...new Intl.Segmenter().segment(t)][0]?.segment; } catch { g = Array.from(t)[0]; } return g && !/[<>&"'`]/.test(g) ? g : d; };
 
   const s = defaultState();
   const st = raw.settings || {};
@@ -80,7 +84,7 @@ export function sanitize(raw) {
     income: Math.max(0, round2(num(st.income))),
     theme: THEMES.has(st.theme) ? st.theme : 'auto',
     onboarded: raw.settings ? !!st.onboarded : true, // a pre-v2 save means an existing user
-    lastCat: str(st.lastCat) || null,
+    lastCat: cid(st.lastCat) || null,
     level: st.level in THRESHOLDS ? st.level : 'balanced',
     locate: st.locate !== false,
     lastAmount: Math.max(0, round2(num(st.lastAmount))),
@@ -96,13 +100,14 @@ export function sanitize(raw) {
   s.categories = (Array.isArray(raw.categories) ? raw.categories : [])
     .filter(c => c && typeof c.name === 'string' && c.name.trim())
     .map(c => ({
-      id: id(c.id), emoji: str(c.emoji, '🏷️') || '🏷️', name: c.name.trim().slice(0, 40),
+      id: id(c.id), emoji: glyph(c.emoji, '🏷️'), name: c.name.trim().slice(0, 40),
       limit: Math.max(0, round2(num(c.limit))), rollover: !!c.rollover,
       since: MONTH.test(c.since) ? c.since : undefined,
       kind: KINDS.includes(c.kind) ? c.kind : undefined,
       essential: !!c.essential,
     }));
   const catIds = new Set(s.categories.map(c => c.id));
+  const cref = x => { const v = cid(x); return catIds.has(v) ? v : null; };
 
   const txRaw = Array.isArray(raw.transactions) ? raw.transactions : Array.isArray(raw.expenses) ? raw.expenses : [];
   s.transactions = txRaw
@@ -111,11 +116,11 @@ export function sanitize(raw) {
       const income = t.type === 'income';
       return {
         id: id(t.id), type: income ? 'income' : 'expense', amount: round2(num(t.amount)),
-        cat: !income && catIds.has(t.cat) ? t.cat : null, note: str(t.note).trim().slice(0, 80), date: t.date,
+        cat: !income ? cref(t.cat) : null, note: str(t.note).trim().slice(0, 80), date: t.date,
         ...(t.rec ? { rec: str(t.rec) } : {}),
         ...(income && t.src === 'buffer' ? { src: 'buffer' } : {}),
-        ...(!income && t.status === 'review' ? { status: 'review', sugg: (Array.isArray(t.sugg) ? t.sugg : []).filter(x => catIds.has(x)).slice(0, 3) } : {}),
-        ...(t.auto && !income && catIds.has(t.cat) ? { auto: true } : {}),
+        ...(!income && t.status === 'review' ? { status: 'review', sugg: (Array.isArray(t.sugg) ? t.sugg : []).map(cref).filter(Boolean).slice(0, 3) } : {}),
+        ...(t.auto && !income && cref(t.cat) ? { auto: true } : {}),
         ...(str(t.merchant) ? { merchant: str(t.merchant).slice(0, 80), mkey: str(t.mkey).slice(0, 80) } : {}),
         ...(Array.isArray(t.near) && t.near.length ? { near: t.near.filter(x => typeof x === 'string').slice(0, 2).map(x => x.slice(0, 60)) } : {}),
         ...(Array.isArray(t.loc) && t.loc.length === 2 && t.loc.every(Number.isFinite) ? { loc: t.loc.map(x => Math.round(x * 1e4) / 1e4) } : {}),
@@ -128,7 +133,7 @@ export function sanitize(raw) {
       const income = r.type === 'income';
       return {
         id: id(r.id), type: income ? 'income' : 'expense', amount: round2(num(r.amount)),
-        cat: !income && catIds.has(r.cat) ? r.cat : null, note: str(r.note).trim().slice(0, 80),
+        cat: !income ? cref(r.cat) : null, note: str(r.note).trim().slice(0, 80),
         freq: r.freq, next: r.next, anchor: Number(r.next.slice(8)),
       };
     });
@@ -136,7 +141,7 @@ export function sanitize(raw) {
   s.goals = (Array.isArray(raw.goals) ? raw.goals : [])
     .filter(g => g && typeof g.name === 'string' && g.name.trim() && num(g.target) > 0)
     .map(g => ({
-      id: id(g.id), emoji: str(g.emoji, '🎯') || '🎯', name: g.name.trim().slice(0, 40),
+      id: id(g.id), emoji: glyph(g.emoji, '🎯'), name: g.name.trim().slice(0, 40),
       target: round2(num(g.target)), saved: Math.max(0, round2(num(g.saved))), date: DATE.test(str(g.date)) ? g.date : '',
       ...(g.buffer ? { buffer: true } : {}),
     }));

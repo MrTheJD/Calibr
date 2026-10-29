@@ -209,6 +209,7 @@ function txSheet(tx, preset = {}) {
   const date = tx?.date ?? L.todayStr();
   const recent = [...new Set(S.transactions.slice().reverse().map(t => t.note).filter(Boolean))].slice(0, 40);
   cap.picked = !editing && preset.cat && catOf(preset.cat) ? preset.cat : null;
+  cap.waited = false;
   const selCat = tx ? tx.cat : cap.picked;
   const amount0 = tx ? tx.amount : (S.settings.lastAmount || '');
   openSheet(`
@@ -248,6 +249,19 @@ function txSheet(tx, preset = {}) {
         else if (!hadStatus) delete x.auto;
       });
       return;
+    }
+
+    // Saved before the first GPS fix arrived? Give it a moment, so the purchase keeps its place.
+    if (t === 'expense' && S.settings.locate && geo.state === 'locating' && !geo.fix && !cap.waited) {
+      cap.waited = true;
+      const form = $('sheet').firstElementChild, btn = form.querySelector('.actions .primary');
+      const label = btn.textContent; btn.textContent = 'Locating…'; btn.disabled = true;
+      let done = false;
+      const go = () => { if (done || !sheet.open) return; done = true; btn.disabled = false; btn.textContent = label; form.requestSubmit ? form.requestSubmit(btn) : btn.click(); };
+      const prev = geo.onChange;
+      geo.onChange = () => { prev?.(); if (geo.fix) setTimeout(go, 150); }; // a beat for the places pack to load
+      setTimeout(go, 2000);
+      return false;
     }
 
     // New transaction: decide whether it can be filed by itself.
@@ -807,7 +821,7 @@ const views = {
         ${S.learn.stats.auto ? `<div class="setrow"><span>Auto-filed so far</span><span class="mute small" style="text-align:right">${S.learn.stats.auto} · ${S.learn.stats.confirmed} confirmed · ${S.learn.stats.fixed} fixed${S.learn.stats.fixed + S.learn.stats.confirmed >= 10 ? ` (${Math.round(L.correctionRate(S.learn.stats) * 100)}% wrong)` : ''}</span></div>` : ''}
         ${L.threshold(st.level, S.learn.stats) > L.THRESHOLDS[st.level] + 0.01 ? '<div class="setrow"><span class="warn small">Extra careful for now, because you have corrected a lot of automatic filings.</span></div>' : ''}
         <div class="setrow"><span>Forget what Calibr learned</span><button class="link over" data-act="forget">Forget…</button></div></div>
-      <p class="mute small" style="margin:8px 4px 0">Anything Calibr isn't sure about goes to a review list instead of being filed. "Very sure" sends more there; "Pretty sure" sends fewer. Your location is only read while the add screen is open and never leaves this device. The approximate spot (about 10 m) of each purchase is saved with it so Calibr can learn; "Forget" removes that.</p>
+      <p class="mute small" style="margin:8px 4px 0">Anything Calibr isn't sure about goes to a review list instead of being filed. "Very sure" sends more there; "Pretty sure" sends fewer. Your location is only read while the add screen is open and never leaves this device. (On some iPhones you may be asked to allow location each time you open the app. Choose Allow.) The approximate spot (about 10 m) of each purchase is saved with it so Calibr can learn; "Forget" removes that.</p>
       <h2>Recurring &amp; bills <button class="link" data-act="addrec">+ Add</button></h2>
       ${S.recurring.length ? `<ul class="list">${S.recurring.map(r => `<li><button class="rowbtn" data-act="rec" data-id="${r.id}"><div class="row"><span class="emoji">${r.type === 'income' ? '💵' : catOf(r.cat)?.emoji ?? '🔁'}</span><span class="grow"><div class="title">${esc(r.note)}</div><div class="small mute">${L.FREQUENCIES[r.freq]} · next ${prettyDate(r.next)}</div></span><span class="amt ${r.type === 'income' ? 'inc' : ''}">${r.type === 'income' ? '+' : ''}${money(r.amount)}</span></div></button></li>`).join('')}</ul>`
         : `<div class="card empty" style="margin:0"><p>Rent, subscriptions, paychecks — add them once and Calibr logs them for you.</p></div>`}

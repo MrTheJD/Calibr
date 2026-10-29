@@ -261,7 +261,11 @@ function txSheet(tx, preset = {}) {
       else { const near = res.cands.filter(c => c.p >= 0.15).slice(0, 2).map(c => c.name); if (near.length) base.near = near; }
     }
     let msg;
-    if (t === 'income') { msg = `Added ${money(amount)} income`; }
+    if (t === 'income') {
+      const mk = date.slice(0, 7), plan = L.planIncome(S, mk);
+      msg = `Added ${money(amount)} income`;
+      if (S.settings.incomeMode === 'varies' && plan > 0) { const got = L.budgetFor(S, mk).earned + amount; msg += got >= plan ? ` · ${money(got - plan)} above your plan` : ` · ${money(plan - got)} to reach your plan`; }
+    }
     else if (chosen) { msg = `Added ${money(amount)} to ${catOf(chosen).name}`; }
     else if (L.decide(res, S.settings.level, fix, S.learn.stats) === 'auto') { base.__auto = res.ranked[0].catId; msg = `Filed ${money(amount)} under ${catOf(base.__auto).name}${place ? ' · ' + place.name : ''}`; }
     else { base.status = 'review'; base.sugg = res.ranked.slice(0, 3).map(r => r.catId); msg = `Saved ${money(amount)} — it needs a category`; }
@@ -381,6 +385,84 @@ function autoChange(msg, fn) {
   autoSheet(msg);
 }
 
+// ---- variable income ----
+function ensureBuffer(plan) {
+  let g = L.bufferGoal(S);
+  if (!g) { g = { id: L.uid(), emoji: '🛟', name: 'Income buffer', target: Math.max(1000, L.round2(plan * 3)), saved: 0, date: '', buffer: true }; S.goals.push(g); }
+  return g;
+}
+function bufferSheet() {
+  const IS = L.incomeStatus(S, ui.month);
+  if (!(IS.surplus > 0)) return;
+  openSheet(`<h3>Save in your buffer</h3>
+    <p class="mute small" style="margin:0">You received ${money(IS.earned)} against a plan of ${money(IS.plan)}. Setting the extra aside means a lean month won't cut into your essentials.</p>
+    <div class="field"><label for="f-amount" class="vh">Amount</label><input id="f-amount" class="amount" name="amount" type="number" inputmode="decimal" step="any" min="0.01" max="${IS.surplus}" value="${IS.surplus}" required></div>
+    <div class="actions"><button class="btn" value="cancel" formnovalidate>Not now</button><button class="btn primary" value="save">Move to buffer</button></div>`,
+  (v, fd) => {
+    const amt = Math.min(IS.surplus, L.round2(parseFloat(fd.get('amount'))));
+    if (!(amt > 0)) return false;
+    change(`Saved ${money(amt)} in your buffer`, () => {
+      ensureBuffer(IS.plan).saved = L.round2(ensureBuffer(IS.plan).saved + amt);
+      S.settings.moved[ui.month] = L.round2((S.settings.moved[ui.month] || 0) + amt);
+    });
+  }, form => setTimeout(() => { form.elements.amount.focus(); form.elements.amount.select(); }, 50));
+}
+function useBuffer() {
+  const buf = L.bufferGoal(S), today = L.todayStr(), IS = L.incomeStatus(S, L.monthOf(today));
+  const amt = buf ? Math.min(buf.saved, IS.gap) : 0;
+  if (!(amt > 0)) return;
+  change(`Moved ${money(amt)} from your buffer`, () => {
+    buf.saved = L.round2(buf.saved - amt);
+    S.transactions.push({ id: L.uid(), type: 'income', amount: amt, cat: null, note: 'From buffer', date: today, src: 'buffer' });
+  });
+}
+
+function leanSheet() {
+  const key = ui.month, IS = L.incomeStatus(S, key);
+  const baseState = { ...S, overrides: { ...S.overrides, [key]: undefined } }; // always plan from the normal limits, never compound
+  const hasAdj = !!S.overrides[key];
+  const start = IS.earned > 0 ? IS.earned : IS.plan;
+  const out = avail => {
+    const p = L.leanPlan(baseState, key, avail);
+    const names = Object.fromEntries(S.categories.map(c => [c.id, c]));
+    return `<div class="stats"><div class="stat"><div class="k">Essentials</div><div class="v">${money(p.eTot)}</div></div><div class="stat"><div class="k">Left for the rest</div><div class="v ${p.room < 0 ? 'over' : ''}">${money(p.room)}</div></div></div>
+      ${p.shortfall > 0 ? `<p class="small over">Essentials alone are ${money(p.shortfall)} more than this. ${L.bufferGoal(S)?.saved > 0 ? 'Your buffer can help.' : 'Consider trimming an essential or finding extra income.'}</p>` : ''}
+      ${p.factor >= 1 ? '<p class="small good">✓ Your normal limits fit. Nothing to trim.</p>' : `<ul class="list" style="margin-top:8px">${p.suggestions.map(x => `<li><div class="rowbtn"><div class="row"><span class="emoji">${names[x.id].emoji}</span><span class="grow">${esc(names[x.id].name)}</span><span class="amt"><span class="mute">${money(x.from)} →</span> <b>${money(x.to)}</b></span></div></div></li>`).join('')}</ul>`}`;
+  };
+  openSheet(`<h3>Plan a lean month</h3>
+    <p class="mute small" style="margin:0">Essentials stay fully funded. Flexible categories shrink to fit what you can count on. This only changes ${monthLabel(key)}.</p>
+    <div class="field"><label for="f-avail">Money I can count on this month</label><input id="f-avail" name="avail" type="number" inputmode="decimal" step="any" min="0" value="${start || ''}" required>
+      <div class="quick"><button type="button" class="btn" data-act="setavail" data-v="${IS.earned}">Received so far</button><button type="button" class="btn" data-act="setavail" data-v="${IS.plan}">My plan</button></div></div>
+    <div id="leanout">${out(start)}</div>
+    <div class="actions">${hasAdj ? '<button class="btn danger spacer" value="reset" formnovalidate>Reset</button>' : '<button class="btn" value="cancel" formnovalidate>Cancel</button>'}<button class="btn primary" value="save">Apply to ${monthLabel(key, { month: 'long' })}</button></div>`,
+  (v, fd) => {
+    if (v === 'reset') { change('Month limits reset', () => { delete S.overrides[key]; }); return; }
+    const p = L.leanPlan(baseState, key, parseFloat(fd.get('avail')) || 0);
+    if (p.factor >= 1) return; // nothing to trim
+    change('Lean-month limits applied', () => { S.overrides[key] = Object.fromEntries(p.suggestions.filter(x => x.to !== x.from).map(x => [x.id, x.to])); });
+  },
+  form => {
+    form.elements.avail.addEventListener('input', () => { $('leanout').innerHTML = out(parseFloat(form.elements.avail.value) || 0); });
+  });
+}
+
+function monthLimitSheet(id) {
+  const c = catOf(id); if (!c) return;
+  const eff = L.limitFor(S, c, ui.month), adj = eff !== c.limit;
+  openSheet(`<h3>${c.emoji} ${esc(c.name)}: ${monthLabel(ui.month, { month: 'long' })} only</h3>
+    <p class="mute small" style="margin:0">Your usual limit is ${money(c.limit)}. Change it just for this month.</p>
+    <div class="field"><label for="f-limit">Limit this month</label><input id="f-limit" name="limit" type="number" inputmode="decimal" step="any" min="0" value="${eff}" required></div>
+    <div class="actions">${adj ? '<button class="btn danger spacer" value="reset" formnovalidate>Use usual</button>' : '<button class="btn" value="cancel" formnovalidate>Cancel</button>'}<button class="btn primary" value="save">Save</button></div>`,
+  (v, fd) => {
+    change('Limit updated for this month', () => {
+      const o = S.overrides[ui.month] ??= {};
+      const val = Math.max(0, L.round2(parseFloat(fd.get('limit')) || 0));
+      if (v === 'reset' || val === c.limit) delete o[id]; else o[id] = val;
+      if (!Object.keys(o).length) delete S.overrides[ui.month];
+    });
+  }, form => setTimeout(() => form.elements.limit.select(), 50));
+}
+
 // ---- category sheets ----
 function catSheet(cat) {
   const editing = !!cat;
@@ -390,6 +472,7 @@ function catSheet(cat) {
     <div class="field"><label for="f-name">Name</label><input id="f-name" name="name" type="text" maxlength="40" required value="${esc(cat?.name)}" placeholder="e.g. Groceries"></div>
     <div class="field"><label for="f-limit">Monthly limit</label><input id="f-limit" name="limit" type="number" inputmode="decimal" step="any" min="0" value="${cat?.limit ?? ''}" placeholder="0" required></div>
     <div class="field"><label for="f-kind">Place type (for location suggestions)</label><select id="f-kind" name="kind"><option value="">Auto: ${esc(L.kindsOf({ name: cat?.name ?? '' }).join(', ') || 'none')}</option>${L.KINDS.map(k => `<option value="${k}" ${cat?.kind === k ? 'selected' : ''}>${KIND_LABEL[k]}</option>`).join('')}</select></div>
+    <div class="field"><label class="check"><input type="checkbox" name="essential" ${cat?.essential ? 'checked' : ''}><span>Essential<br><span class="mute small">Covered first. In a lean month, flexible categories shrink before this one.</span></span></label></div>
     <div class="field"><label class="check"><input type="checkbox" name="rollover" ${cat?.rollover ? 'checked' : ''}><span>Carry unspent money into next month<br><span class="mute small">Starts from this month. Overspending doesn't carry over.</span></span></label></div>
     <div class="actions">${editing ? '<button class="btn danger spacer" value="delete" formnovalidate>Delete</button>' : '<button class="btn" value="cancel" formnovalidate>Cancel</button>'}
       <button class="btn primary" value="save">Save</button></div>`,
@@ -406,7 +489,7 @@ function catSheet(cat) {
     const name = String(fd.get('name')).trim();
     if (!name) return false;
     const rollover = fd.get('rollover') === 'on';
-    const data = { emoji: firstGlyph(fd.get('emoji')) || '🏷️', name, limit: Math.max(0, L.round2(parseFloat(fd.get('limit')) || 0)), rollover, kind: fd.get('kind') || undefined };
+    const data = { emoji: firstGlyph(fd.get('emoji')) || '🏷️', name, limit: Math.max(0, L.round2(parseFloat(fd.get('limit')) || 0)), rollover, kind: fd.get('kind') || undefined, essential: fd.get('essential') === 'on' };
     change(editing ? 'Category updated' : 'Category added', () => {
       if (editing) {
         Object.assign(cat, data);
@@ -428,10 +511,11 @@ function catDetail(id) {
     <h3>${row.cat.emoji} ${esc(row.cat.name)}</h3>
     <p class="mute" style="margin:0 0 10px">${monthLabel(ui.month)}</p>
     <div class="stats"><div class="stat"><div class="k">Left</div><div class="v ${row.left < 0 ? 'over' : ''}">${money(row.left)}</div></div>
-      <div class="stat"><div class="k">Spent of ${money(row.avail)}</div><div class="v">${money(row.spent)}</div></div></div>
+      <div class="stat"><div class="k">Spent of ${money(row.avail)}${row.adjusted ? ' (adjusted)' : ''}</div><div class="v">${money(row.spent)}</div></div></div>
     ${row.carry > 0 ? `<p class="small mute">Includes ${money(row.carry)} carried over from earlier months.</p>` : ''}
     ${txs.length ? `<ul class="list">${txs.map(t => `<li><button type="button" class="rowbtn" data-act="tx" data-id="${t.id}"><div class="row"><span class="grow"><div class="title">${esc(t.note || row.cat.name)}</div><div class="small mute">${prettyDate(t.date)}</div></span><span class="amt">${money(t.amount)}</span></div></button></li>`).join('')}</ul>` : '<p class="empty">Nothing spent here yet.</p>'}
     <div class="actions"><button class="btn" value="cancel" formnovalidate>Close</button>
+      <button class="btn" type="button" data-act="monthlimit" data-id="${id}">This month…</button>
       <button class="btn" type="button" data-act="editcat" data-id="${id}">Edit</button>
       <button class="btn primary" type="button" data-act="addto" data-id="${id}">+ Expense</button></div>`);
 }
@@ -516,7 +600,8 @@ function onboardSheet() {
     <p class="mute" style="margin:0 0 4px">Log a purchase in seconds. Calibr uses where you are to guess the category, and you set a limit for each one. Everything stays on this device.</p>
     <div class="field"><span class="lab">Pick the categories you'll use (5–6 is plenty)</span>
       <div class="chips">${L.PRESETS.map(([emoji, name, , , on]) => `<label><input class="vh" type="checkbox" name="cats" value="${esc(name)}" ${on ? 'checked' : ''}><span>${emoji} ${esc(name)}</span></label>`).join('')}</div></div>
-    <div class="field"><label for="f-income">Monthly income, after tax (optional)</label><input id="f-income" name="income" type="number" inputmode="decimal" step="any" min="0" placeholder="Used to suggest limits"></div>
+    <div class="field"><span class="lab">My pay is</span><div class="seg" role="radiogroup"><label><input class="vh" type="radio" name="pay" value="steady" checked><span>Steady</span></label><label><input class="vh" type="radio" name="pay" value="varies"><span>Different each time</span></label></div></div>
+    <div class="field"><label for="f-income">Monthly income after tax, or a typical low month if it varies (optional)</label><input id="f-income" name="income" type="number" inputmode="decimal" step="any" min="0" placeholder="Used to suggest limits"></div>
     <div class="field"><label for="f-cur">Currency</label><select id="f-cur" name="currency">${L.CURRENCIES.map(([c, n]) => `<option value="${c}" ${c === S.settings.currency ? 'selected' : ''}>${c} · ${n}</option>`).join('')}</select></div>
     <div class="field"><label class="check"><input type="checkbox" name="locate" checked><span>Use my location to suggest categories<br><span class="mute small">Only while you're adding a purchase. Never leaves your device.</span></span></label></div>
     <div class="actions"><button class="btn" value="skip" formnovalidate>Skip</button><button class="btn primary" value="go">Get started</button></div>`,
@@ -526,6 +611,7 @@ function onboardSheet() {
       const income = Math.max(0, L.round2(parseFloat(fd.get('income')) || 0));
       S.settings.currency = fd.get('currency');
       S.settings.income = income;
+      S.settings.incomeMode = fd.get('pay') === 'varies' ? 'varies' : 'steady';
       S.settings.locate = fd.get('locate') === 'on';
       if (!S.categories.length) S.categories = L.fromPresets(fd.getAll('cats'), income);
       if (S.settings.locate) navigator.geolocation?.getCurrentPosition(() => {}, () => {}, { timeout: 10000 }); // ask for permission now, while the user expects it
@@ -563,11 +649,23 @@ const views = {
       hint = B.left > 0 ? `You can spend about <b>${money(B.left / dl)}</b> a day for the next ${plural(dl, 'day')}.`
         : B.left < 0 ? `You're <b class="over">${money(-B.left)}</b> over budget this month.` : 'Budget fully used — nice and exact.';
     }
-    const inc = S.settings.income;
+    const varies = S.settings.incomeMode === 'varies';
+    const IS = L.incomeStatus(S, ui.month);
+    const inc = IS.plan;
     const unassigned = L.round2(inc - B.limits);
-    const incomeLine = inc > 0
-      ? `<span>Income ${money(inc)}</span><span class="${unassigned < 0 ? 'over' : ''}">${unassigned < 0 ? `Limits exceed income by ${money(-unassigned)}` : `${money(unassigned)} unassigned`}</span>`
-      : `<button class="link small" data-act="tab" data-tab="settings">Set your monthly income →</button><span></span>`;
+    const unassignedTxt = `<span class="${unassigned < 0 ? 'over' : ''}">${unassigned < 0 ? `Limits exceed plan by ${money(-unassigned)}` : `${money(unassigned)} unassigned`}</span>`;
+    let incomeLine, incomeHint = '';
+    if (varies) {
+      incomeLine = inc > 0 ? `<span>Plan ${money(inc)} · received ${money(IS.earned)}${IS.drawn > 0 ? ` + ${money(IS.drawn)} buffer` : ''}</span>${unassignedTxt}`
+        : `<button class="link small" data-act="tab" data-tab="settings">Set a starting income estimate →</button><span></span>`;
+      const buf = L.bufferGoal(S);
+      if (inc > 0 && IS.surplus > 0) incomeHint = `<div class="hint">💰 <b>${money(IS.surplus)}</b> above your plan. <button class="link" data-act="tobuffer">Save it in your buffer</button></div>`;
+      else if (inc > 0 && IS.gap > 0) incomeHint = `<div class="hint">${money(IS.gap)} to go to reach your plan.${cur ? ` <button class="link" data-act="lean">Plan a lean month</button>` : ''}${cur && buf?.saved > 0 ? ` <button class="link" data-act="usebuffer">Use buffer</button>` : ''}</div>`;
+    } else {
+      incomeLine = inc > 0
+        ? `<span>Income ${money(inc)}</span>${unassignedTxt}`
+        : `<button class="link small" data-act="tab" data-tab="settings">Set your monthly income →</button><span></span>`;
+    }
     const upcoming = cur ? L.upcoming(S, today, 14) : [];
     const nReview = L.reviewList(S).length;
     const nAuto = L.autoUnconfirmed(S, today).length;
@@ -576,7 +674,7 @@ const views = {
     return `${banner}<section class="card hero"><div class="label">Left this month</div>
       <div class="big ${B.left < 0 ? 'over' : ''}">${money(B.left)}</div>${bar(pct)}
       <div class="sub"><span>${money(B.spent)} spent</span><span>of ${money(B.budget)}</span></div>
-      <div class="sub">${incomeLine}</div>${hint ? `<div class="hint">${hint}</div>` : ''}</section>
+      <div class="sub">${incomeLine}</div>${hint ? `<div class="hint">${hint}</div>` : ''}${incomeHint}</section>
       ${autoCard}
       ${upcoming.length ? `<h2>Coming up</h2><ul class="list">${upcoming.map(r => {
         const d = L.daysBetween(today, r.next);
@@ -585,7 +683,7 @@ const views = {
       <h2>Categories</h2>
       <ul class="list">${B.cats.map(r => `<li><button class="rowbtn" data-act="cat" data-id="${r.cat.id}">
         <div class="row"><span class="emoji">${r.cat.emoji}</span><span class="grow"><div class="title">${esc(r.cat.name)}</div>
-        <div class="small mute">${money(r.spent)} of ${money(r.avail)}${r.carry > 0 ? ` · +${money(r.carry)} carried` : ''}</div></span>
+        <div class="small mute">${money(r.spent)} of ${money(r.avail)}${r.carry > 0 ? ` · +${money(r.carry)} carried` : ''}${r.adjusted ? ' · adjusted' : ''}</div></span>
         <span class="amt ${r.left < 0 ? 'over' : ''}"><b>${money(Math.abs(r.left))}</b> <span class="mute small">${r.left < 0 ? 'over' : 'left'}</span></span></div>${bar(r.pct, 'thin')}</button></li>`).join('')}
         ${B.uncategorized > 0 ? `<li><div class="rowbtn"><div class="row"><span class="emoji">❔</span><span class="grow"><div class="title">${L.reviewList(S).length ? 'Needs a category' : 'Uncategorized'}</div><div class="small mute">Counted in your total, not in a category</div></span><span class="amt">${money(B.uncategorized)}</span></div></div></li>` : ''}
       </ul>
@@ -614,13 +712,22 @@ const views = {
     const top = L.monthTx(S, ui.month).filter(t => t.type === 'expense').sort((a, b) => b.amount - a.amount).slice(0, 3);
     const tr = L.trend(S, ui.month, 6);
     const max = Math.max(1, ...tr.flatMap(t => [t.spent, t.income]));
-    if (!rows.length && !B.income) return `<div class="card empty"><span class="big">📊</span><b>Nothing to analyze yet</b><p>Add a few transactions and your insights will show up here.</p><button class="btn primary" data-act="add">Add a transaction</button></div>`;
+    if (!rows.length && !B.income && !L.incomeStats(S, ui.month)) return `<div class="card empty"><span class="big">📊</span><b>Nothing to analyze yet</b><p>Add a few transactions and your insights will show up here.</p><button class="btn primary" data-act="add">Add a transaction</button></div>`;
     const delta = prev > 0 ? Math.round(((B.spent - prev) / prev) * 100) : null;
     return `<div class="stats" style="margin-top:6px">
       <div class="stat"><div class="k">Spent</div><div class="v">${money(B.spent)}</div>${delta !== null ? `<div class="small ${delta > 0 ? 'over' : 'good'}">${delta > 0 ? '▲' : '▼'} ${Math.abs(delta)}% vs last month</div>` : ''}</div>
       <div class="stat"><div class="k">Income</div><div class="v good">${money(B.income)}</div></div>
       <div class="stat"><div class="k">Net</div><div class="v ${net < 0 ? 'over' : 'good'}">${net < 0 ? '−' : '+'}${money(Math.abs(net))}</div></div>
       <div class="stat"><div class="k">Daily average</div><div class="v">${money(B.spent / days)}</div></div></div>
+      ${(() => {
+        const st = L.incomeStats(S, ui.month);
+        if (!st) return '';
+        const varies = S.settings.incomeMode === 'varies';
+        if (!varies && st.spread < 0.2) return '';
+        return `<h2>Your income</h2><div class="card"><div>${money(st.min)} – ${money(st.max)} a month, averaging ${money(st.avg)}, over ${st.n} months.</div>
+          ${varies ? `<div class="small mute" style="margin-top:6px">Calibr plans on ${money(L.planIncome(S, ui.month))}, based on your lower months, so a good month is a bonus and a slow one is expected.</div>`
+            : `<div class="small mute" style="margin-top:6px">That's quite a spread. Planning around your lower months keeps a slow month from breaking the budget.</div><button class="btn block" data-act="setvaries">Plan around my lower months</button>`}</div>`;
+      })()}
       ${rows.length ? `<h2>Where it went</h2><div class="card bars">${rows.map(r => `<div class="b"><div class="row"><span>${r.emoji} ${esc(r.name)}</span><span class="amt">${money(r.spent)} <span class="mute small">${Math.round((r.spent / B.spent) * 100)}%</span></span></div>${bar((r.spent / rows[0].spent) * 100, 'thin ok')}</div>`).join('')}</div>` : ''}
       <h2>Last 6 months</h2><div class="card"><div class="trend" role="img" aria-label="${esc(tr.map(t => `${monthLabel(t.key, { month: 'long' })}: spent ${money(t.spent)}, income ${money(t.income)}`).join('. '))}">
         ${tr.map(t => `<div class="col"><div class="pair"><i class="inc" style="height:${(t.income / max) * 100}%"></i><i style="height:${(t.spent / max) * 100}%"></i></div><div class="lbl">${monthLabel(t.key, { month: 'short' })}</div></div>`).join('')}</div>
@@ -635,7 +742,8 @@ const views = {
       ${S.goals.length ? S.goals.map(g => {
         const pct = (g.saved / g.target) * 100, left = L.round2(g.target - g.saved);
         let note = '';
-        if (left <= 0) note = '🎉 Goal reached!';
+        if (g.buffer) { const plan = L.planIncome(S, L.monthOf(today)); note = plan > 0 ? `Your cushion for lean months: about ${(g.saved / plan).toFixed(1)} months of your plan.` : 'Your cushion for lean months.'; }
+        else if (left <= 0) note = '🎉 Goal reached!';
         else if (g.date) {
           const m = L.monthsBetween(today, g.date);
           note = g.date < today ? 'Target date has passed' : `Save about <b>${money(left / Math.max(1, m))}</b>/month to hit ${monthLabel(L.monthOf(g.date), { month: 'short', year: 'numeric' })}`;
@@ -650,7 +758,10 @@ const views = {
     const st = S.settings;
     return `<h1 class="pagetitle">Settings</h1>
       <h2>Money</h2><div class="list">
-        <div class="setrow"><label for="s-income">Monthly income</label><input id="s-income" data-bind="income" type="number" inputmode="decimal" step="any" min="0" value="${st.income || ''}" placeholder="0"></div>
+        <div class="setrow"><label for="s-mode">My pay is</label><select id="s-mode" data-bind="incomeMode"><option value="steady" ${st.incomeMode === 'steady' ? 'selected' : ''}>Steady</option><option value="varies" ${st.incomeMode === 'varies' ? 'selected' : ''}>Different each time</option></select></div>
+        <div class="setrow"><label for="s-income">${st.incomeMode === 'varies' ? 'Starting estimate (a low month)' : 'Monthly income'}</label><input id="s-income" data-bind="income" type="number" inputmode="decimal" step="any" min="0" value="${st.income || ''}" placeholder="0"></div>
+        ${st.incomeMode === 'varies' ? `<div class="setrow"><label for="s-plan">Plan on (monthly)</label><input id="s-plan" data-bind="planOverride" type="number" inputmode="decimal" step="any" min="0" value="${st.planOverride || ''}" placeholder="${L.baselineIncome(S, ui.month) || 'auto'}"></div>
+        <div class="setrow"><span class="mute small">${st.planOverride ? 'Using your number. Clear it to let Calibr choose.' : L.baselineIncome(S, ui.month) ? `Auto: ${money(L.baselineIncome(S, ui.month))}, the average of your lower recent months. It adjusts as you log income.` : 'Until you have two months of income logged, Calibr uses your starting estimate.'}</span></div>` : ''}
         <div class="setrow"><label for="s-cur">Currency</label><select id="s-cur" data-bind="currency">${L.CURRENCIES.map(([c, n]) => `<option value="${c}" ${c === st.currency ? 'selected' : ''}>${c} · ${n}</option>`).join('')}</select></div>
         <div class="setrow"><label for="s-theme">Appearance</label><select id="s-theme" data-bind="theme">${['auto', 'light', 'dark'].map(t => `<option value="${t}" ${st.theme === t ? 'selected' : ''}>${t[0].toUpperCase() + t.slice(1)}</option>`).join('')}</select></div></div>
       <h2>Smart capture</h2><div class="list">
@@ -757,6 +868,12 @@ const actions = {
   autoreview: () => autoSheet(),
   confirm: el => { const t = S.transactions.find(x => x.id === el.dataset.id); if (t) autoChange('Confirmed', () => { delete t.auto; S.learn.stats.confirmed++; }); },
   confirmall: () => { const list = L.autoUnconfirmed(S, L.todayStr()).slice(0, 12); autoChange(`Confirmed ${list.length}`, () => list.forEach(t => { delete t.auto; S.learn.stats.confirmed++; })); },
+  tobuffer: () => bufferSheet(),
+  usebuffer: () => useBuffer(),
+  lean: () => leanSheet(),
+  setavail: el => { const i = document.querySelector('#sheet [name=avail]'); i.value = el.dataset.v; i.dispatchEvent(new Event('input', { bubbles: true })); },
+  monthlimit: el => { closeSheet(); monthLimitSheet(el.dataset.id); },
+  setvaries: () => { S.settings.incomeMode = 'varies'; save(); render(); toast('Now planning around your lower months'); },
   rvundo2: () => { const u = rvUndo; rvUndo = null; u?.(); autoSheet('Undone'); },
   rvundo: () => { const u = rvUndo; rvUndo = null; u?.(); reviewSheet('Undone'); },
   forget: () => {
@@ -793,6 +910,8 @@ document.addEventListener('change', ev => {
   }
   const bind = t.dataset?.bind;
   if (bind === 'income') { S.settings.income = Math.max(0, L.round2(parseFloat(t.value) || 0)); save(); toast('Income saved'); }
+  else if (bind === 'incomeMode') { S.settings.incomeMode = t.value; save(); render(); }
+  else if (bind === 'planOverride') { S.settings.planOverride = Math.max(0, L.round2(parseFloat(t.value) || 0)); save(); render(); }
   else if (bind === 'currency') { S.settings.currency = t.value; save(); render(); }
   else if (bind === 'locate') { S.settings.locate = t.checked; save(); }
   else if (bind === 'quickOpen') { S.settings.quickOpen = t.checked; save(); }

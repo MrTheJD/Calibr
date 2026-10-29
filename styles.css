@@ -150,3 +150,4 @@ input.amount{-moz-appearance:textfield;appearance:textfield}
 
 .autocard{display:flex;align-items:center;gap:12px;width:100%;text-align:left}
 .autocard .grow{flex:1}
+.hint .link{padding:0 2px}

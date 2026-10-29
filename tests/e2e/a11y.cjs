@@ -15,7 +15,7 @@ const state = { v: 2, settings: { onboarded: true, locate: false, incomeMode: 'v
 (async () => {
   const b = await chromium.launch(); const results = {};
   for (const scheme of ['light', 'dark']) {
-    const c = await b.newContext({ viewport: { width: 390, height: 844 }, locale: 'en-US', colorScheme: scheme });
+    const c = await b.newContext({ viewport: { width: 390, height: 844 }, locale: 'en-US', colorScheme: scheme, reducedMotion: 'reduce' });
     const p = await c.newPage();
     await p.addInitScript(s => localStorage.setItem('calibr.v2', JSON.stringify(s)), state);
     await p.goto(BASE); await p.waitForSelector('.hero');

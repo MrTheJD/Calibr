@@ -53,7 +53,7 @@ export const daysLeftInMonth = today => daysInMonth(monthOf(today)) - Number(tod
 // ---- state ----
 export const defaultState = () => ({
   v: 2,
-  settings: { currency: 'USD', income: 0, theme: 'auto', onboarded: false, lastCat: null, level: 'balanced', locate: true, lastAmount: 0, quickOpen: false, incomeMode: 'steady', planOverride: 0, moved: {}, lastBackup: '' },
+  settings: { currency: 'USD', income: 0, theme: 'auto', onboarded: false, lastCat: null, level: 'balanced', locate: true, lastAmount: 0, quickOpen: false, incomeMode: 'steady', planOverride: 0, moved: {}, lastBackup: '', installDismissed: false },
   categories: [],
   transactions: [],
   recurring: [],
@@ -87,6 +87,7 @@ export function sanitize(raw) {
     quickOpen: !!st.quickOpen,
     incomeMode: st.incomeMode === 'varies' ? 'varies' : 'steady',
     lastBackup: DATE.test(str(st.lastBackup)) ? st.lastBackup : '',
+    installDismissed: !!st.installDismissed,
     planOverride: Math.max(0, round2(num(st.planOverride))),
     moved: Object.fromEntries(Object.entries(st.moved && typeof st.moved === 'object' ? st.moved : {}).filter(([k, v]) => MONTH.test(k) && num(v) > 0).map(([k, v]) => [k, round2(num(v))])),
   };

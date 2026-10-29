@@ -20,7 +20,7 @@ const AMBIG = { latitude: 40.74453, longitude: -73.99686, accuracy: 12 };
     await p.fill('[name=amount]', String(amount));
     if (pick) await p.locator('#capture .chipbtn', { hasText: pick }).first().click();
   };
-  const waitCapture = txt => p.waitForFunction(t => document.querySelector('#capture')?.innerText.includes(t), txt, { timeout: 15000 });
+  const waitCapture = txt => p.waitForFunction(t => document.getElementById('sheet').open && document.querySelector('#capture')?.innerText.includes(t), txt, { timeout: 15000 });
 
   await p.goto(URL);
   await p.waitForSelector('#sheet[open]');
@@ -34,7 +34,7 @@ const AMBIG = { latitude: 40.74453, longitude: -73.99686, accuracy: 12 };
 
   // --- earned trust: first visits are one-tap suggestions, then it files by itself
   await p.click('#fab');
-  await waitCapture('FAIRWAY MARKET');
+  await waitCapture('📍 FAIRWAY MARKET');
   assert((await txt('#capture')).includes('New here?'), await txt('#capture'));
   assert(!(await txt('#capture')).includes('automatically'), 'does not auto-file a brand-new place');
   assert.strictEqual(await p.inputValue('[name=amount]'), '', 'no last amount yet');
@@ -47,7 +47,7 @@ const AMBIG = { latitude: 40.74453, longitude: -73.99686, accuracy: 12 };
   }
   step('first three visits: one tap on the suggestion each time');
   await p.click('#fab');
-  await waitCapture('FAIRWAY MARKET');
+  await waitCapture('📍 FAIRWAY MARKET');
   assert((await txt('#capture')).includes('automatically'), 'earned: ' + await txt('#capture'));
   assert.strictEqual(await p.inputValue('[name=amount]'), '35', 'prefilled with the last amount here');
   await shot('21-capture-confident');
@@ -59,7 +59,7 @@ const AMBIG = { latitude: 40.74453, longitude: -73.99686, accuracy: 12 };
 
   // --- last amount prefilled and selected
   await p.click('#fab');
-  await waitCapture('FAIRWAY MARKET');
+  await waitCapture('📍 FAIRWAY MARKET');
   assert.strictEqual(await p.evaluate(() => document.activeElement.name), 'amount', 'amount focused');
   await p.fill('[name=amount]', '19');
   await p.press('[name=amount]', 'Enter');

@@ -697,7 +697,7 @@ function packBuilderUrl() {
 }
 function placesStatus() {
   if (packs.entry) return `${esc(packs.entry.label)} · ${packs.entry.places.toLocaleString()} places`;
-  if (!packs.list) { loadPackList().then(() => ui.tab === 'settings' && render()); return 'Checking…'; }
+  if (!packs.list) { loadPackList().then(() => { const el = document.getElementById('places-status'); if (el) el.innerHTML = placesStatus(); }); return 'Checking…'; } // update just this label: a full re-render would wipe whatever is being typed
   if (!packs.list.length) return 'None installed. Calibr will learn the places you visit; see the README to add a city.';
   return 'Loads automatically when you add a purchase in a covered area.';
 }
@@ -846,7 +846,7 @@ const views = {
         <div class="setrow"><label for="s-quick">Open straight to Add</label><input id="s-quick" data-bind="quickOpen" type="checkbox" ${st.quickOpen ? 'checked' : ''} style="width:22px;height:22px;accent-color:var(--brand)"></div>
         <div class="setrow"><label for="s-level">Auto-file when</label><select id="s-level" data-bind="level"><option value="cautious" ${st.level === 'cautious' ? 'selected' : ''}>Very sure</option><option value="balanced" ${st.level === 'balanced' ? 'selected' : ''}>Fairly sure</option><option value="eager" ${st.level === 'eager' ? 'selected' : ''}>Pretty sure</option></select></div>
         <div class="setrow"><span>Check that it's working</span><button class="link" data-act="diag">Test location</button></div>
-        <div class="setrow"><span>Places data</span><span class="mute small" style="text-align:right;max-width:60%">${placesStatus()}</span></div>
+        <div class="setrow"><span>Places data</span><span id="places-status" class="mute small" style="text-align:right;max-width:60%">${placesStatus()}</span></div>
         ${packBuilderUrl() ? `<div class="setrow"><span>Add places for my area</span><a class="link" href="${packBuilderUrl()}" target="_blank" rel="noopener">Open ›</a></div>` : ''}
         <div class="setrow"><span>Learned so far</span><span class="mute small">${plural(Object.keys(S.learn.merchants).length, 'place')} · ${plural(S.learn.spots.length, 'spot')}</span></div>
         ${S.learn.stats.auto ? `<div class="setrow"><span>Auto-filed so far</span><span class="mute small" style="text-align:right">${S.learn.stats.auto} · ${S.learn.stats.confirmed} confirmed · ${S.learn.stats.fixed} fixed${S.learn.stats.fixed + S.learn.stats.confirmed >= 10 ? ` (${Math.round(L.correctionRate(S.learn.stats) * 100)}% wrong)` : ''}</span></div>` : ''}

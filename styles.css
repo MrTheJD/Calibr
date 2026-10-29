@@ -156,3 +156,10 @@ input.amount{-moz-appearance:textfield;appearance:textfield}
 .datepick{grid-template-columns:1fr 1fr}
 .datepick input[type=date]{grid-column:1/-1}
 dialog input,dialog select{min-width:0}
+
+/* Never let a sheet grow wider than the screen, whatever font the device uses. */
+dialog,dialog *{min-width:0}
+dialog .row{flex-wrap:wrap}
+dialog .amt{white-space:normal}
+.stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+.stat .v{overflow-wrap:anywhere}

@@ -1,0 +1,30 @@
+const { chromium } = require('playwright');
+const BASE = process.env.BASE || 'http://localhost:8124/';
+const SP = process.env.OUT || require('os').tmpdir();
+const FIX = require('path').join(__dirname, '../fixtures/packs');
+const assert = require('assert');
+(async () => {
+  const b = await chromium.launch();
+  const c = await b.newContext({ viewport: { width: 390, height: 844 }, locale: 'en-US', acceptDownloads: true });
+  const p = await c.newPage(); const errs = []; p.on('pageerror', e => errs.push(e.message));
+  const d = new Date(); const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  await p.addInitScript(([day]) => { if (!localStorage.getItem('calibr.v2')) localStorage.setItem('calibr.v2', JSON.stringify({ v: 2, settings: { onboarded: true, incomeMode: 'varies', income: 2000 }, categories: [{ id: 'a', emoji: '🛒', name: 'Groceries', limit: 400 }],
+    transactions: Array.from({ length: 35 }, (_, i) => ({ id: 't' + i, type: 'expense', amount: 5 + i, cat: 'a', date: day, note: 'x' + i })) })); }, [day]);
+  await p.goto(BASE); await p.waitForSelector('.hero');
+  assert((await p.locator('.autocard:has-text("Back up your data")').count()) === 1, 'backup reminder shown');
+  const [dl] = await Promise.all([p.waitForEvent('download'), p.click('[data-act=exportjson]')]);
+  assert(/calibr-backup-\d{4}-\d{2}-\d{2}\.json/.test(dl.suggestedFilename()));
+  assert((await p.locator('.autocard:has-text("Back up your data")').count()) === 0, 'reminder gone after backup');
+  await p.reload(); await p.waitForSelector('.hero');
+  assert((await p.locator('.autocard:has-text("Back up your data")').count()) === 0, 'stays gone');
+  console.log('  ✓ backup reminder shows, clears after backing up, and stays cleared');
+  await p.click('[data-act=addincome]');
+  await p.waitForSelector('#sheet[open] [name=amount]');
+  assert.strictEqual(await p.locator('input[name=type]:checked').inputValue(), 'income');
+  await p.fill('[name=amount]', '640'); await p.click('.actions button[value=save]');
+  await p.waitForSelector('#sheet:not([open])', { state: 'attached' });
+  assert((await p.locator('.hero').innerText()).includes('received $640.00'));
+  console.log('  ✓ "Log a paycheck" opens the add sheet on Income');
+  assert.deepStrictEqual(errs, []);
+  await b.close(); console.log('E2E6 OK');
+})().catch(e => { console.error('FAIL', e.message); process.exit(1); });

@@ -1,0 +1,29 @@
+{
+ "v": 1,
+ "packs": [
+  {
+   "name": "midtown-test",
+   "label": "Midtown Manhattan (demo)",
+   "bbox": [
+    -74.0214,
+    40.724529999999994,
+    -73.97686,
+    40.77029
+   ],
+   "file": "midtown-test.json",
+   "places": 1841
+  },
+  {
+   "name": "nwa-test",
+   "label": "Northwest Arkansas (test)",
+   "bbox": [
+    -94.04251,
+    36.00682,
+    -94.00251,
+    36.046820000000004
+   ],
+   "file": "nwa-test.json",
+   "places": 19
+  }
+ ]
+}

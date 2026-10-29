@@ -151,3 +151,8 @@ input.amount{-moz-appearance:textfield;appearance:textfield}
 .autocard{display:flex;align-items:center;gap:12px;width:100%;text-align:left}
 .autocard .grow{flex:1}
 .hint .link{padding:0 2px}
+.actions{flex-wrap:wrap}
+.actions .btn{flex:1 1 auto;min-width:0}
+.datepick{grid-template-columns:1fr 1fr}
+.datepick input[type=date]{grid-column:1/-1}
+dialog input,dialog select{min-width:0}

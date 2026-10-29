@@ -462,6 +462,26 @@ function diagSheet() {
   }, err => { gps[1] = err.code === 1 ? 'Blocked. Allow location for this site in your browser or phone settings.' : err.code === 3 ? 'Timed out. Try outdoors or near a window.' : 'Unavailable'; gps[2] = false; show(); }, { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 });
 }
 
+// ---- suggest limits ----
+function suggestSheet() {
+  openSheet(`<h3>Suggest my limits</h3>
+    <p class="mute small" style="margin:0">Calibr fills in a typical share of your income for each category that has no limit yet. You can change any of them afterwards.</p>
+    <div class="field"><label for="f-income">Monthly income after tax${S.settings.incomeMode === 'varies' ? ' (a typical low month)' : ''}</label><input id="f-income" name="income" type="number" inputmode="decimal" step="any" min="1" required value="${S.settings.income || ''}"></div>
+    <div id="sugglist" class="small mute"></div>
+    <div class="actions"><button class="btn" value="cancel" formnovalidate>Cancel</button><button class="btn primary" value="save">Apply</button></div>`,
+  (v, fd) => {
+    const income = clampAmt(parseFloat(fd.get('income')));
+    const list = L.suggestLimits(S, income);
+    if (!(income > 0) || !list.length) return false;
+    change(`Limits suggested for ${plural(list.length, 'category')}`, () => { S.settings.income = income; for (const x of list) S.categories.find(c => c.id === x.id).limit = x.limit; });
+  },
+  form => {
+    const show = () => { const list = L.suggestLimits(S, parseFloat(form.elements.income.value) || 0); $('sugglist').innerHTML = list.length ? list.map(x => { const c = catOf(x.id); return `${c.emoji} ${esc(c.name)} ${money(x.limit)}`; }).join(' · ') : 'Enter your income to see the suggestions.'; };
+    form.elements.income.addEventListener('input', show); show();
+    setTimeout(() => { form.elements.income.focus(); form.elements.income.select(); }, 50);
+  });
+}
+
 // ---- variable income ----
 function ensureBuffer(plan) {
   let g = L.bufferGoal(S);
@@ -721,7 +741,7 @@ const views = {
     const B = L.budgetFor(S, ui.month);
     const pct = B.budget ? (B.spent / B.budget) * 100 : B.spent ? 100 : 0;
     let hint = '';
-    if (cur) {
+    if (cur && B.budget > 0) {
       const dl = L.daysLeftInPeriod(S, today);
       hint = B.left > 0 ? `You can spend about <b>${money(B.left / dl)}</b> a day for the next ${plural(dl, 'day')}.`
         : B.left < 0 ? `You're <b class="over">${money(-B.left)}</b> over budget this month.` : 'Budget fully used — nice and exact.';
@@ -754,10 +774,12 @@ const views = {
     const iosBrowser = /iPhone|iPad|iPod/.test(navigator.userAgent) && !navigator.standalone && !matchMedia('(display-mode: standalone)').matches;
     const installCard = iosBrowser && !S.settings.installDismissed ? `<div class="card autocard"><span class="emoji">📲</span><span class="grow"><b>Add Calibr to your Home Screen</b><br><span class="small mute">Tap the Share button, then “Add to Home Screen”. iPhone can clear a website's data after a week away, but not an app on your Home Screen.</span></span><button class="del" data-act="dismissinstall" aria-label="Dismiss">✕</button></div>` : '';
     const backupCard = L.backupDue(S, today) ? `<div class="card autocard"><span class="emoji">💾</span><span class="grow">Back up your data<br><span class="small mute">It only lives on this phone. Save a copy so you never lose it.</span></span><button class="btn primary" data-act="exportjson">Back up</button></div>` : '';
+    const noLimits = B.limits === 0 && B.budget === 0;
+    const limitsCard = noLimits ? `<div class="card autocard"><span class="emoji">🎯</span><span class="grow"><b>Set your monthly limits</b><br><span class="small mute">Tap a category to choose how much to spend on it, or let Calibr suggest limits from your income.</span></span><button class="btn primary" data-act="suggestlimits">Suggest</button></div>` : '';
     const sug = L.detectRecurring(S, today)[0];
     const sugCard = sug ? `<div class="card autocard"><span class="emoji">🔁</span><span class="grow"><b>${esc(sug.note)}</b> repeats ${sug.freq === 'monthly' ? 'every month' : sug.freq === 'weekly' ? 'every week' : 'every two weeks'}<br><span class="small mute">${money(sug.amount)} each time, seen ${sug.count} times. Add it as a recurring bill and Calibr will log it for you.</span></span><div style="display:flex;flex-direction:column;gap:6px"><button class="btn primary" data-act="addsuggested" data-key="${esc(sug.key)}">Add</button><button class="link small" data-act="dismisssuggested" data-key="${esc(sug.key)}">Not now</button></div></div>` : '';
     const banner = nReview ? `<button class="card banner" data-act="review"><span class="emoji">📥</span><span class="grow"><b>${plural(nReview, 'purchase')} need${nReview === 1 ? 's' : ''} a category</b><br><span class="small mute">One tap each to file them</span></span><span class="link">Review ›</span></button>` : '';
-    return `${banner}${installCard}${backupCard}<section class="card hero"><div class="label">Left this month</div>
+    return `${banner}${limitsCard}${installCard}${backupCard}<section class="card hero"><div class="label">Left this month</div>
       <div class="big ${B.left < 0 ? 'over' : ''}">${money(B.left)}</div>${bar(pct)}
       <div class="sub"><span>${money(B.spent)} spent</span><span>of ${money(B.budget)}</span></div>
       <div class="sub">${incomeLine}</div>${hint ? `<div class="hint">${hint}</div>` : ''}${incomeHint}</section>
@@ -975,6 +997,7 @@ const actions = {
     change(`${d.note} added as a recurring bill`, () => { S.recurring.push({ id: L.uid(), type: 'expense', amount: d.amount, cat: d.cat, note: d.note, freq: d.freq, next: d.next, anchor: d.anchor }); });
   },
   dismisssuggested: el => { S.settings.dismissedRecurring.push(el.dataset.key); save(); render(); },
+  suggestlimits: () => suggestSheet(),
   tobuffer: () => bufferSheet(),
   usebuffer: () => useBuffer(),
   lean: () => leanSheet(),

@@ -673,3 +673,14 @@ export function weekSummary(s, today) {
   const top = [...byCat].sort((a, b) => b[1] - a[1])[0];
   return { start, thisWeek: sum(start, today), lastWeek: sum(prevStart, prevEnd), topCat: top && top[0] ? top[0] : null, topAmount: top ? round2(top[1]) : 0, days: elapsed + 1 };
 }
+
+/** Suggested limits for categories that have none yet, from the share of income typical for that kind of spending. */
+export function suggestLimits(s, income) {
+  if (!(income > 0)) return [];
+  const step = income >= 2000 ? 10 : 5;
+  return s.categories.filter(c => !c.limit).map(c => {
+    const name = c.name.trim().toLowerCase();
+    const pre = PRESETS.find(p => p[1].toLowerCase() === name) || PRESETS.find(p => p[2] && p[2] === (c.kind || kindsOf(c)[0]));
+    return pre ? { id: c.id, limit: Math.round((income * pre[3]) / 100 / step) * step } : null;
+  }).filter(x => x && x.limit > 0);
+}

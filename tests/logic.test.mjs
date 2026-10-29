@@ -527,3 +527,24 @@ test('hostile backups cannot smuggle markup through ids or emoji', () => {
   assert.equal(s.transactions[0].cat, s.categories[0].id, 'references follow the cleaned id');
   assert.match(s.settings.lastCat ?? 'x', safe);
 });
+
+test('week summary compares the same stretch of this and last week', () => {
+  const s = state();
+  // 2026-10-29 is a Thursday: this week started Monday the 26th, last week Monday the 19th (compare 19th..22nd)
+  s.transactions = [tx('2026-10-26', 30, cat(s, 'Groceries')), tx('2026-10-28', 50, cat(s, 'Fun')), tx('2026-10-29', 25, cat(s, 'Groceries')),
+    tx('2026-10-19', 40, cat(s, 'Groceries')), tx('2026-10-22', 10, cat(s, 'Fun')), tx('2026-10-24', 500, cat(s, 'Fun')), tx('2026-10-27', 99, null, 'income')];
+  const w = L.weekSummary(s, '2026-10-29');
+  assert.equal(w.start, '2026-10-26');
+  assert.equal(w.thisWeek, 105);
+  assert.equal(w.lastWeek, 50, 'only Mon-Thu of last week, so the weekend spend is not counted');
+  assert.equal(w.topCat, cat(s, 'Groceries'));
+  assert.equal(w.topAmount, 55);
+  assert.equal(w.days, 4);
+  assert.equal(L.weekSummary(s, '2026-11-01').start, '2026-10-26', 'Sunday belongs to the week that started Monday');
+});
+
+test('absurd amounts are capped so they cannot break the layout', () => {
+  const s = L.sanitize({ settings: { income: 1e15, planOverride: 5e20, lastAmount: 1e12 }, categories: [{ id: 'a', name: 'A', limit: 1e30 }],
+    transactions: [{ id: 't', type: 'expense', amount: 1e18, cat: 'a', date: '2026-10-01' }], goals: [{ id: 'g', name: 'G', target: 1e25, saved: 1e22 }] });
+  for (const v of [s.settings.income, s.settings.planOverride, s.settings.lastAmount, s.categories[0].limit, s.transactions[0].amount, s.goals[0].target, s.goals[0].saved]) assert.equal(v, L.MAX_MONEY);
+});

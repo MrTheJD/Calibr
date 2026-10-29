@@ -18,7 +18,7 @@ const state = { v: 2, settings: { onboarded: true, locate: false, incomeMode: 'v
   for (const w of [320, 360]) {
     const c = await b.newContext({ viewport: { width: w, height: 640 }, locale: 'en-US' });
     const p = await c.newPage();
-    await p.addInitScript(() => addEventListener('DOMContentLoaded', () => { const st = document.createElement('style'); st.textContent = 'body{font-size:17px}'; document.head.append(st); })); // wider text than usual: real phones vary const oc = p.click.bind(p); p.click = (sel, o) => { process.stdout.write('click ' + sel + '\n'); return oc(sel, { timeout: 5000, ...(o||{}) }); };
+    await p.addInitScript(() => addEventListener('DOMContentLoaded', () => { const st = document.createElement('style'); st.textContent = 'body{font-size:17px} body,button,input,select{font-family:"DejaVu Sans Mono","Liberation Mono",monospace !important}'; document.head.append(st); })); // wider text than usual: real phones vary const oc = p.click.bind(p); p.click = (sel, o) => { process.stdout.write('click ' + sel + '\n'); return oc(sel, { timeout: 5000, ...(o||{}) }); };
     await p.addInitScript(s => localStorage.setItem('calibr.v2', JSON.stringify(s)), state);
     await p.goto(BASE); await p.waitForSelector('.hero');
     const check = async name => { await p.waitForTimeout(250); const r = await p.evaluate(() => { const d = document.getElementById('sheet'); const root = d.open ? d : document.documentElement; return { page: document.documentElement.scrollWidth - innerWidth, sheet: d.open ? d.scrollWidth - d.clientWidth : 0 }; }); if (r.page > 1 || r.sheet > 1) bad.push(`${w}px ${name}: page +${r.page}, sheet +${r.sheet}`); };

@@ -27,6 +27,8 @@ const MONTH = /^\d{4}-\d{2}$/;
 const p2 = n => String(n).padStart(2, '0');
 
 export const round2 = n => Math.round((n + Number.EPSILON) * 100) / 100;
+export const MAX_MONEY = 1e9; // no real budget needs more, and absurd values break layouts
+const capMoney = n => Math.min(MAX_MONEY, n);
 export const uid = () =>
   (globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2) + Date.now().toString(36)).replace(/-/g, '').slice(0, 12);
 
@@ -81,27 +83,27 @@ export function sanitize(raw) {
   const st = raw.settings || {};
   s.settings = {
     currency: CODES.has(st.currency) ? st.currency : 'USD',
-    income: Math.max(0, round2(num(st.income))),
+    income: Math.max(0, capMoney(round2(num(st.income)))),
     theme: THEMES.has(st.theme) ? st.theme : 'auto',
     onboarded: raw.settings ? !!st.onboarded : true, // a pre-v2 save means an existing user
     lastCat: cid(st.lastCat) || null,
     level: st.level in THRESHOLDS ? st.level : 'balanced',
     locate: st.locate !== false,
-    lastAmount: Math.max(0, round2(num(st.lastAmount))),
+    lastAmount: Math.max(0, capMoney(round2(num(st.lastAmount)))),
     quickOpen: !!st.quickOpen,
     incomeMode: st.incomeMode === 'varies' ? 'varies' : 'steady',
     lastBackup: DATE.test(str(st.lastBackup)) ? st.lastBackup : '',
     installDismissed: !!st.installDismissed,
     dismissedRecurring: (Array.isArray(st.dismissedRecurring) ? st.dismissedRecurring : []).filter(x => typeof x === 'string').slice(-100),
-    planOverride: Math.max(0, round2(num(st.planOverride))),
-    moved: Object.fromEntries(Object.entries(st.moved && typeof st.moved === 'object' ? st.moved : {}).filter(([k, v]) => MONTH.test(k) && num(v) > 0).map(([k, v]) => [k, round2(num(v))])),
+    planOverride: Math.max(0, capMoney(round2(num(st.planOverride)))),
+    moved: Object.fromEntries(Object.entries(st.moved && typeof st.moved === 'object' ? st.moved : {}).filter(([k, v]) => MONTH.test(k) && num(v) > 0).map(([k, v]) => [k, capMoney(round2(num(v)))])),
   };
 
   s.categories = (Array.isArray(raw.categories) ? raw.categories : [])
     .filter(c => c && typeof c.name === 'string' && c.name.trim())
     .map(c => ({
       id: id(c.id), emoji: glyph(c.emoji, '🏷️'), name: c.name.trim().slice(0, 40),
-      limit: Math.max(0, round2(num(c.limit))), rollover: !!c.rollover,
+      limit: Math.max(0, capMoney(round2(num(c.limit)))), rollover: !!c.rollover,
       since: MONTH.test(c.since) ? c.since : undefined,
       kind: KINDS.includes(c.kind) ? c.kind : undefined,
       essential: !!c.essential,
@@ -115,7 +117,7 @@ export function sanitize(raw) {
     .map(t => {
       const income = t.type === 'income';
       return {
-        id: id(t.id), type: income ? 'income' : 'expense', amount: round2(num(t.amount)),
+        id: id(t.id), type: income ? 'income' : 'expense', amount: capMoney(round2(num(t.amount))),
         cat: !income ? cref(t.cat) : null, note: str(t.note).trim().slice(0, 80), date: t.date,
         ...(t.rec ? { rec: str(t.rec) } : {}),
         ...(income && t.src === 'buffer' ? { src: 'buffer' } : {}),
@@ -132,7 +134,7 @@ export function sanitize(raw) {
     .map(r => {
       const income = r.type === 'income';
       return {
-        id: id(r.id), type: income ? 'income' : 'expense', amount: round2(num(r.amount)),
+        id: id(r.id), type: income ? 'income' : 'expense', amount: capMoney(round2(num(r.amount))),
         cat: !income ? cref(r.cat) : null, note: str(r.note).trim().slice(0, 80),
         freq: r.freq, next: r.next, anchor: Number(r.next.slice(8)),
       };
@@ -142,7 +144,7 @@ export function sanitize(raw) {
     .filter(g => g && typeof g.name === 'string' && g.name.trim() && num(g.target) > 0)
     .map(g => ({
       id: id(g.id), emoji: glyph(g.emoji, '🎯'), name: g.name.trim().slice(0, 40),
-      target: round2(num(g.target)), saved: Math.max(0, round2(num(g.saved))), date: DATE.test(str(g.date)) ? g.date : '',
+      target: capMoney(round2(num(g.target))), saved: Math.max(0, capMoney(round2(num(g.saved)))), date: DATE.test(str(g.date)) ? g.date : '',
       ...(g.buffer ? { buffer: true } : {}),
     }));
   for (const [m, o] of Object.entries(raw.overrides && typeof raw.overrides === 'object' ? raw.overrides : {})) {
@@ -161,7 +163,7 @@ export function sanitize(raw) {
     if (n > 0) {
       const lm = {};
       for (const [c, v] of Object.entries(m.lm && typeof m.lm === 'object' ? m.lm : {})) if (cats[c] && Array.isArray(v) && Number.isFinite(+v[0]) && Number.isFinite(+v[1]) && +v[0] > 0) lm[c] = [Math.round(+v[0]), +v[1]];
-      s.learn.merchants[k.slice(0, 80)] = { name: str(m.name).slice(0, 80), n, cats, amt: Math.max(0, round2(num(m.amt))), lm };
+      s.learn.merchants[k.slice(0, 80)] = { name: str(m.name).slice(0, 80), n, cats, amt: Math.max(0, capMoney(round2(num(m.amt)))), lm };
     }
   }
   s.learn.spots = (Array.isArray(raw.learn?.spots) ? raw.learn.spots : []).slice(0, 400)
@@ -643,4 +645,17 @@ export function detectRecurring(s, today) {
     out.push({ key, note: (last.note || last.merchant).slice(0, 80), amount: round2(avg), cat: last.cat || null, freq, next, count: txs.length, anchor, merchant: last.merchant, first: first.date });
   }
   return out.sort((a, b) => b.count - a.count).slice(0, 3);
+}
+
+const weekStart = d => addDays(d, -((parse(d).getDay() + 6) % 7)); // weeks start on Monday
+
+/** Spending so far this week against the same stretch of last week, plus this week's biggest category. */
+export function weekSummary(s, today) {
+  const start = weekStart(today), prevStart = addDays(start, -7), elapsed = daysBetween(start, today);
+  const prevEnd = addDays(prevStart, elapsed);
+  const sum = (from, to) => round2(s.transactions.filter(t => t.type === 'expense' && t.date >= from && t.date <= to).reduce((a, t) => a + t.amount, 0));
+  const byCat = new Map();
+  for (const t of s.transactions) if (t.type === 'expense' && t.date >= start && t.date <= today) { const k = s.categories.some(c => c.id === t.cat) ? t.cat : ''; byCat.set(k, (byCat.get(k) || 0) + t.amount); }
+  const top = [...byCat].sort((a, b) => b[1] - a[1])[0];
+  return { start, thisWeek: sum(start, today), lastWeek: sum(prevStart, prevEnd), topCat: top && top[0] ? top[0] : null, topAmount: top ? round2(top[1]) : 0, days: elapsed + 1 };
 }

@@ -58,7 +58,7 @@ h2 .link{text-transform:none;letter-spacing:0;font-size:.9rem}
 .seg input:checked+span{background:var(--card);color:var(--ink);box-shadow:0 1px 3px #0002}
 .seg button{flex:1;border:0;background:none;padding:8px 6px;border-radius:9px;font-weight:600;font-size:.9rem;color:var(--mute)}
 .seg button.on{background:var(--card);color:var(--ink);box-shadow:0 1px 3px #0002}
-.vh{position:absolute;opacity:0;width:1px;height:1px;pointer-events:none}
+.vh{position:absolute;opacity:0;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;margin:-1px;pointer-events:none}
 .seg input:focus-visible+span,.chips input:focus-visible+span{outline:2px solid var(--brand);outline-offset:1px}
 
 .stats{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
@@ -163,3 +163,16 @@ dialog .row{flex-wrap:wrap}
 dialog .amt{white-space:normal}
 .stats{grid-template-columns:repeat(2,minmax(0,1fr))}
 .stat .v{overflow-wrap:anywhere}
+
+/* Big numbers (yen, billions) must shrink or wrap instead of pushing the page wider. */
+.hero .big{font-size:clamp(1.6rem,9vw,2.5rem);overflow-wrap:anywhere}
+.hero .sub{flex-wrap:wrap}
+.stat .v{font-size:clamp(1rem,5.2vw,1.3rem)}
+.stats>*{min-width:0}
+.bars .row>span:first-child,.card .row>span:first-child{min-width:0}
+.bars .row>span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bars .amt{flex:none}
+.card .row{flex-wrap:wrap}
+
+.card,.hint,.small,.sub,.stat,.row .title{overflow-wrap:anywhere}
+.row .title{overflow-wrap:normal}

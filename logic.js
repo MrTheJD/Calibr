@@ -122,6 +122,7 @@ export function sanitize(raw) {
       since: MONTH.test(c.since) ? c.since : undefined,
       kind: KINDS.includes(c.kind) ? c.kind : undefined,
       essential: !!c.essential,
+      hue: Number.isInteger(c.hue) && c.hue >= 0 && c.hue < 11 ? c.hue : undefined,
     }));
   const catIds = new Set(s.categories.map(c => c.id));
   const cref = x => { const v = cid(x); return catIds.has(v) ? v : null; };

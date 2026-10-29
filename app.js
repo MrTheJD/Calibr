@@ -28,7 +28,14 @@ function load() {
 }
 let S = load();
 let saveFailed = false;
+// Each category keeps a colour (an index into the --c0..--c10 palette) so charts, tiles and bars agree everywhere.
+function ensureHues() {
+  const used = new Set(S.categories.map(c => c.hue).filter(h => h != null));
+  for (const c of S.categories) if (c.hue == null) { let h = 0; while (used.has(h) && h < 10) h++; c.hue = h; used.add(h); }
+}
+const catColor = c => (c ? `var(--c${c.hue ?? 0})` : 'var(--cu)');
 function save() {
+  ensureHues();
   try { localStorage.setItem(KEY, JSON.stringify(S)); saveFailed = false; }
   catch { if (!saveFailed) toast("Couldn't save — storage is full or blocked"); saveFailed = true; }
 }
@@ -55,7 +62,8 @@ const prettyDate = s => {
 };
 const catOf = id => S.categories.find(c => c.id === id);
 const level = pct => (pct >= 100 ? 'over' : pct >= 80 ? 'warn' : '');
-const bar = (pct, cls = '') => `<div class="bar ${cls.includes('thin') ? 'thin' : ''}"><i class="${cls.replace('thin', '').trim() || level(pct)}" style="width:${Math.max(0, Math.min(pct, 100))}%"></i></div>`;
+const bar = (pct, cls = '', color = '') => `<div class="bar ${cls.includes('thin') ? 'thin' : ''}"><i class="${cls.replace('thin', '').trim() || level(pct)}" style="width:${Math.max(0, Math.min(pct, 100))}%${color ? `;--c:${color}` : ''}"></i></div>`;
+const tile = (glyph, c) => `<span class="emoji"${c ? ` style="--c:${catColor(c)}"` : ''}>${glyph}</span>`;
 const clampAmt = n => (Number.isFinite(n) ? Math.min(L.MAX_MONEY, L.round2(n)) : NaN);
 const firstGlyph = s => {
   s = (s || '').trim();
@@ -169,6 +177,17 @@ function openSheet(html, onSubmit, onMount, primary = 'save') {
   onMount?.(form);
   return form;
 }
+// Keep the sheet above the on-screen keyboard: the visual viewport shrinks, the layout viewport does not.
+const vv = window.visualViewport, root = document.documentElement;
+function fitViewport() {
+  const h = vv ? vv.height : innerHeight, kb = vv ? Math.max(0, innerHeight - vv.height - vv.offsetTop) : 0;
+  root.style.setProperty('--vvh', `${Math.round(h)}px`);
+  root.style.setProperty('--kb', `${Math.round(kb)}px`);
+  root.classList.toggle('kb', kb > 80);
+}
+vv?.addEventListener('resize', fitViewport); vv?.addEventListener('scroll', fitViewport); addEventListener('orientationchange', () => setTimeout(fitViewport, 300));
+fitViewport();
+sheet.addEventListener('focusin', ev => { const t = ev.target; if (t.matches('input:not([type=checkbox]):not([type=radio]), select')) setTimeout(() => t.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' }), 280); });
 sheet.addEventListener('close', () => { if (!sheet.open) stopLocating(); }); // `open` is true again if another sheet replaced this one
 sheet.addEventListener('click', ev => { if (ev.target === sheet) sheet.close(); });
 const closeSheet = () => sheet.open && sheet.close();
@@ -746,6 +765,47 @@ function placesStatus() {
   return 'Loads automatically when you add a purchase in a covered area.';
 }
 
+// ---------- charts ----------
+const spendRows = B => [...B.cats.map(r => ({ emoji: r.cat.emoji, name: r.cat.name, spent: r.spent, color: catColor(r.cat) })), { emoji: '❔', name: 'Uncategorized', spent: B.uncategorized, color: catColor(null) }]
+  .filter(r => r.spent > 0).sort((a, b) => b.spent - a.spent);
+// One stacked bar showing how this period's spending divides up.
+function splitCard(B) {
+  const rows = spendRows(B);
+  if (B.spent <= 0 || !rows.length) return '';
+  const pct = r => Math.round((r.spent / B.spent) * 100);
+  const shown = rows.slice(0, 4), more = rows.length - shown.length;
+  const label = rows.map(r => `${r.name} ${pct(r)}%`).join(', ');
+  return `<section class="card split"><div class="row"><b>Where it's going</b><span class="small mute">${money(B.spent)} spent</span></div>
+    <div class="stack" role="img" aria-label="${esc(label)}">${rows.map(r => `<i style="flex-grow:${r.spent};--c:${r.color}"></i>`).join('')}</div>
+    <div class="key">${shown.map(r => `<span><i class="dot" style="background:${r.color}"></i>${esc(r.name)} ${pct(r)}%</span>`).join('')}${more > 0 ? `<span class="mute">+${more} more</span>` : ''}</div></section>`;
+}
+// A progress ring around an icon.
+const ring = (glyph, pct, color) => `<span class="ring" style="--p:${Math.max(0, Math.min(100, pct)).toFixed(1)};--c:${color}" aria-hidden="true"><svg viewBox="0 0 44 44"><circle class="track" cx="22" cy="22" r="19"/><circle class="arc" cx="22" cy="22" r="19" pathLength="100" stroke-dasharray="${Math.max(0, Math.min(100, pct)).toFixed(1)} 100"/></svg><span>${glyph}</span></span>`;
+function donut(rows, total) {
+  let off = 0;
+  const arcs = rows.map(r => {
+    const p = (r.spent / total) * 100, len = Math.max(0.01, p - (rows.length > 1 ? 1.4 : 0));
+    const a = `<circle cx="60" cy="60" r="44" pathLength="100" style="stroke:${r.color}" stroke-dasharray="${len.toFixed(2)} ${(100 - len).toFixed(2)}" stroke-dashoffset="${(-off).toFixed(2)}"/>`;
+    off += p; return a;
+  }).join('');
+  const top = rows[0], share = Math.round((top.spent / total) * 100);
+  return `<div class="donutwrap" role="img" aria-label="${esc(rows.map(r => `${r.name} ${Math.round((r.spent / total) * 100)}%`).join(', '))}"><svg class="donut" viewBox="0 0 120 120" aria-hidden="true"><circle class="track" cx="60" cy="60" r="44"/>${arcs}</svg>
+    <div class="mid"><span class="e">${top.emoji}</span><b>${share}%</b><span class="small mute">${esc(top.name)}</span></div></div>`;
+}
+// Spending per day across the period; today is highlighted.
+function dailyCard(today) {
+  const { start, end } = L.periodBounds(S, ui.month);
+  const per = {};
+  for (const t of L.monthTx(S, ui.month)) if (t.type === 'expense') per[t.date] = (per[t.date] || 0) + t.amount;
+  const days = []; for (let d = start; d <= end && days.length < 62; d = L.addDays(d, 1)) days.push(d);
+  const max = Math.max(...days.map(d => per[d] || 0));
+  if (!(max > 0)) return '';
+  const label = d => parseDate(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  const best = days.reduce((a, d) => ((per[d] || 0) > (per[a] || 0) ? d : a), days[0]);
+  return `<h2>Day by day</h2><div class="card"><div class="daily" role="img" aria-label="Daily spending. Most on ${label(best)}: ${money(per[best])}">${days.map(d => `<i class="${d === today ? 'now' : d > today ? 'future' : ''}" style="height:${Math.max(3, ((per[d] || 0) / max) * 100)}%${per[d] ? '' : ';opacity:.35'}"></i>`).join('')}</div>
+    <div class="axis"><span>${label(days[0])}</span><span class="mute">Most: ${label(best)} · ${money(per[best])}</span><span>${label(days[days.length - 1])}</span></div></div>`;
+}
+
 const views = {
   budget() {
     const today = L.todayStr(), cur = ui.month === L.periodOf(S, today);
@@ -800,6 +860,7 @@ const views = {
       <div class="big ${B.left < 0 ? 'over' : ''}">${money(B.left)}</div>${bar(pct)}
       <div class="sub"><span>${money(B.spent)} spent</span><span>of ${money(B.budget)}</span></div>
       <div class="sub">${incomeLine}</div>${hint ? `<div class="hint">${hint}</div>` : ''}${incomeHint}</section>
+      ${splitCard(B)}
       ${autoCard}${sugCard}
       ${upcoming.length ? `<h2>Coming up <span class="mute" style="text-transform:none;letter-spacing:0">${(() => { const out = L.round2(upcoming.filter(r => r.type === 'expense').reduce((x, r) => x + r.amount, 0)), inn = L.round2(upcoming.filter(r => r.type === 'income').reduce((x, r) => x + r.amount, 0)); return [out ? `${money(out)} due` : '', inn ? `${money(inn)} expected` : ''].filter(Boolean).join(' · '); })()}</span></h2><ul class="list">${upcoming.map(r => {
         const d = L.daysBetween(today, r.next);
@@ -807,9 +868,9 @@ const views = {
       }).join('')}</ul>` : ''}
       <h2>Categories</h2>
       <ul class="list">${B.cats.map(r => `<li><button class="rowbtn" data-act="cat" data-id="${r.cat.id}">
-        <div class="row"><span class="emoji">${r.cat.emoji}</span><span class="grow"><div class="title">${esc(r.cat.name)}</div>
+        <div class="row">${tile(r.cat.emoji, r.cat)}<span class="grow"><div class="title">${esc(r.cat.name)}</div>
         <div class="small mute">${money(r.spent)} of ${money(r.avail)}${r.carry > 0 ? ` · +${money(r.carry)} carried` : ''}${r.adjusted ? ' · adjusted' : ''}${FUND && FUND.byId[r.cat.id].short > 0 ? ` · <span class="warn">${FUND.byId[r.cat.id].funded > 0 ? `${money(FUND.byId[r.cat.id].short)} not funded yet` : 'not funded yet'}</span>` : ''}</div></span>
-        <span class="amt ${r.left < 0 ? 'over' : ''}"><b>${money(Math.abs(r.left))}</b> <span class="mute small">${r.left < 0 ? 'over' : 'left'}</span></span></div>${bar(r.pct, 'thin')}</button></li>`).join('')}
+        <span class="amt ${r.left < 0 ? 'over' : ''}"><b>${money(Math.abs(r.left))}</b> <span class="mute small">${r.left < 0 ? 'over' : 'left'}</span></span></div>${bar(r.pct, 'thin', catColor(r.cat))}</button></li>`).join('')}
         ${B.uncategorized > 0 ? `<li><div class="rowbtn"><div class="row"><span class="emoji">❔</span><span class="grow"><div class="title">${L.reviewList(S).length ? 'Needs a category' : 'Uncategorized'}</div><div class="small mute">Counted in your total, not in a category</div></span><span class="amt">${money(B.uncategorized)}</span></div></div></li>` : ''}
       </ul>
       <button class="addrow" data-act="addcat">+ Add category</button>`;
@@ -832,7 +893,7 @@ const views = {
     const days = cur ? L.daysBetween(L.periodBounds(S, ui.month).start, today) + 1 : L.periodLength(S, ui.month);
     const prev = L.budgetFor(S, L.addMonths(ui.month, -1)).spent;
     const net = L.round2(B.income - B.spent);
-    const rows = [...B.cats.map(r => ({ emoji: r.cat.emoji, name: r.cat.name, spent: r.spent })), { emoji: '❔', name: 'Uncategorized', spent: B.uncategorized }]
+    const rows = [...B.cats.map(r => ({ emoji: r.cat.emoji, name: r.cat.name, spent: r.spent, color: catColor(r.cat) })), { emoji: '❔', name: 'Uncategorized', spent: B.uncategorized, color: catColor(null) }]
       .filter(r => r.spent > 0).sort((a, b) => b.spent - a.spent);
     const top = L.monthTx(S, ui.month).filter(t => t.type === 'expense').sort((a, b) => b.amount - a.amount).slice(0, 3);
     const tr = L.trend(S, ui.month, 6);
@@ -859,7 +920,8 @@ const views = {
           ${varies ? `<div class="small mute" style="margin-top:6px">Calibr plans on ${money(L.planIncome(S, ui.month))}, based on your lower months, so a good month is a bonus and a slow one is expected.</div>`
             : `<div class="small mute" style="margin-top:6px">That's quite a spread. Planning around your lower months keeps a slow month from breaking the budget.</div><button class="btn block" data-act="setvaries">Plan around my lower months</button>`}</div>`;
       })()}
-      ${rows.length ? `<h2>Where it went</h2><div class="card bars">${rows.map(r => `<div class="b"><div class="row"><span>${r.emoji} ${esc(r.name)}</span><span class="amt">${money(r.spent)} <span class="mute small">${Math.round((r.spent / B.spent) * 100)}%</span></span></div>${bar((r.spent / rows[0].spent) * 100, 'thin ok')}</div>`).join('')}</div>` : ''}
+      ${rows.length ? `<h2>Where it went</h2><div class="card bars">${donut(rows, B.spent)}${rows.map(r => `<div class="b"><div class="row"><span><i class="dot" style="background:${r.color}"></i>${r.emoji} ${esc(r.name)}</span><span class="amt">${money(r.spent)} <span class="mute small">${Math.round((r.spent / B.spent) * 100)}%</span></span></div>${bar((r.spent / rows[0].spent) * 100, 'thin ok', r.color)}</div>`).join('')}</div>` : ''}
+      ${dailyCard(today)}
       <h2>Last 6 months</h2><div class="card"><div class="trend" role="img" aria-label="${esc(tr.map(t => `${monthLabel(t.key, { month: 'long' })}: spent ${money(t.spent)}, income ${money(t.income)}`).join('. '))}">
         ${tr.map(t => `<div class="col"><div class="pair"><i class="inc" style="height:${(t.income / max) * 100}%"></i><i style="height:${(t.spent / max) * 100}%"></i></div><div class="lbl">${monthLabel(t.key, { month: 'short' })}</div></div>`).join('')}</div>
         <div class="legend"><span><i class="inc"></i>Income</span><span><i></i>Spent</span></div></div>
@@ -879,8 +941,8 @@ const views = {
           const m = L.monthsBetween(today, g.date);
           note = g.date < today ? 'Target date has passed' : `Save about <b>${money(left / Math.max(1, m))}</b>/month to hit ${monthLabel(L.monthOf(g.date), { month: 'short', year: 'numeric' })}`;
         }
-        return `<div class="card"><div class="row"><button class="rowbtn grow" style="padding:0" data-act="goal" data-id="${g.id}"><div class="row"><span class="emoji">${g.emoji}</span><span class="grow"><div class="title"><b>${esc(g.name)}</b></div><div class="small mute">${money(g.saved)} of ${money(g.target)}</div></span></div></button>
-          <button class="btn" data-act="fund" data-id="${g.id}">Add</button></div>${bar(pct, left <= 0 ? 'inc' : 'ok')}${note ? `<div class="small mute" style="margin-top:8px">${note}</div>` : ''}</div>`;
+        return `<div class="card"><div class="row"><button class="rowbtn grow" style="padding:0" data-act="goal" data-id="${g.id}"><div class="row">${ring(g.emoji, pct, left <= 0 || g.buffer ? 'var(--bar-good)' : 'var(--bar)')}<span class="grow"><div class="title"><b>${esc(g.name)}</b></div><div class="small mute">${money(g.saved)} of ${money(g.target)} · ${Math.min(100, Math.floor(pct))}%</div></span></div></button>
+          <button class="btn" data-act="fund" data-id="${g.id}">Add</button></div>${note ? `<div class="small mute" style="margin-top:8px">${note}</div>` : ''}</div>`;
       }).join('') : `<div class="card empty"><span class="big">🎯</span><b>No goals yet</b><p>An emergency fund, a trip, a new laptop — track it here.</p></div>`}
       <button class="addrow" data-act="addgoal">+ New goal</button>`;
   },
@@ -926,7 +988,7 @@ const views = {
 function txRow(t) {
   const c = catOf(t.cat), inc = t.type === 'income';
   const sub = inc ? 'Income' : t.status === 'review' ? '<span class="warn">Needs a category</span>' : esc(c?.name ?? 'Uncategorized');
-  return `<li><button class="rowbtn" data-act="tx" data-id="${t.id}"><div class="row"><span class="emoji">${inc ? '💵' : c?.emoji ?? '❔'}</span>
+  return `<li><button class="rowbtn" data-act="tx" data-id="${t.id}"><div class="row">${tile(inc ? '💵' : c?.emoji ?? '❔', inc ? null : c)}
     <span class="grow"><div class="title">${esc(t.note || t.merchant || (t.near ? 'Near ' + t.near.join(' or ') : inc ? 'Income' : c?.name ?? 'Expense'))}</div><div class="small mute">${sub}${t.merchant && t.note ? ' · ' + esc(t.merchant) : ''}${t.auto ? ' · 📍 auto' : ''}${t.rec ? ' · ↻ recurring' : ''}</div></span>
     <span class="amt ${inc ? 'inc' : ''}">${inc ? '+' : ''}${money(t.amount)}</span></div></button></li>`;
 }
@@ -951,6 +1013,7 @@ function applyTheme() {
   if (t === 'auto') document.documentElement.removeAttribute('data-theme'); else document.documentElement.dataset.theme = t;
 }
 function render() {
+  ensureHues();
   const pd = document.getElementById('places-details'); if (pd) ui.placesOpen = pd.open; // read the live state: the 'toggle' event arrives a moment late
   const monthTab = ['budget', 'activity', 'insights'].includes(ui.tab);
   $('top').hidden = !monthTab;
@@ -958,13 +1021,14 @@ function render() {
   $('fab').hidden = !['budget', 'activity', 'insights'].includes(ui.tab);
   document.querySelectorAll('#nav button').forEach(b => { b.classList.toggle('on', b.dataset.tab === ui.tab); b.setAttribute('aria-current', b.dataset.tab === ui.tab ? 'page' : 'false'); });
   document.querySelector('#nav [data-tab=budget]').dataset.badge = L.reviewList(S).length || '';
+  $('view').classList.toggle('enter', ui.anim); ui.anim = false;
   $('view').innerHTML = (monthTab ? `<h1 class="vh">${{ budget: 'Budget', activity: 'Activity', insights: 'Insights' }[ui.tab]} for ${periodLabel(ui.month)}</h1>` : '') + views[ui.tab]();
   document.querySelectorAll('#view input[type=number]:not([max])').forEach(i => { i.max = L.MAX_MONEY; });
   applyTheme();
 }
 
 // ---------- actions ----------
-const shiftMonth = n => { ui.month = L.addMonths(ui.month, n); render(); };
+const shiftMonth = n => { ui.month = L.addMonths(ui.month, n); ui.anim = true; render(); };
 const download = (name, type, text) => {
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([text], { type }));
@@ -974,10 +1038,10 @@ const download = (name, type, text) => {
 const stamp = () => L.todayStr();
 
 const actions = {
-  tab: el => { ui.tab = el.dataset.tab; render(); window.scrollTo(0, 0); },
+  tab: el => { if (ui.tab !== el.dataset.tab) ui.anim = true; ui.tab = el.dataset.tab; render(); window.scrollTo(0, 0); },
   prev: () => shiftMonth(-1),
   next: () => shiftMonth(1),
-  thisMonth: () => { ui.month = periodNow(); render(); },
+  thisMonth: () => { ui.month = periodNow(); ui.anim = true; render(); },
   add: () => txSheet(null),
   addto: el => { closeSheet(); txSheet(null, { cat: el.dataset.id }); },
   tx: el => { const t = S.transactions.find(x => x.id === el.dataset.id); if (t) { closeSheet(); txSheet(t); } },

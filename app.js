@@ -220,7 +220,7 @@ function txSheet(tx, preset = {}) {
   const date = tx?.date ?? L.todayStr();
   const recent = [...new Set(S.transactions.slice().reverse().map(t => t.note).filter(Boolean))].slice(0, 40);
   cap.picked = !editing && preset.cat && catOf(preset.cat) ? preset.cat : null;
-  cap.waited = false;
+  cap.waited = false; cap.bigOk = false;
   const selCat = tx ? tx.cat : cap.picked;
   const amount0 = tx ? tx.amount : (S.settings.lastAmount || '');
   openSheet(`
@@ -260,6 +260,17 @@ function txSheet(tx, preset = {}) {
         else if (!hadStatus) delete x.auto;
       });
       return;
+    }
+
+    // A slipped decimal is the most common number-pad mistake: pause once on an unusually large amount.
+    if (t === 'expense' && !cap.bigOk) {
+      const big = L.looksTooBig(S, amount);
+      if (big) {
+        cap.bigOk = true;
+        const el = $('capture') || $('sheet').querySelector('.actions');
+        el.insertAdjacentHTML('beforebegin', `<div class="small warn" id="bigwarn" style="margin:8px 2px">That's a lot more than usual (typically about ${money(big.median)}). Tap Add again if ${money(amount)} is right.</div>`);
+        return false;
+      }
     }
 
     // Saved before the first GPS fix arrived? Give it a moment, so the purchase keeps its place.
@@ -861,7 +872,7 @@ function txList() {
   let txs = L.monthTx(S, ui.month).filter(t =>
     (ui.type === 'all' || t.type === ui.type || (ui.type === 'review' && t.status === 'review') || (ui.type === 'auto' && t.auto)) &&
     (ui.cat === 'all' || (ui.cat === 'none' ? t.type === 'expense' && !catOf(t.cat) : t.cat === ui.cat)) &&
-    (!q || [t.note, t.merchant, ...(t.near || []), catOf(t.cat)?.name].some(x => x && x.toLowerCase().includes(q))));
+    (!q || [t.note, t.merchant, ...(t.near || []), catOf(t.cat)?.name, t.amount.toFixed(2)].some(x => x && x.toLowerCase().includes(q))));
   if (!txs.length) return `<div class="card empty"><span class="big">🧾</span>${L.monthTx(S, ui.month).length ? 'No transactions match.' : '<b>No transactions this month</b><p>Tap + to add your first one.</p>'}</div>`;
   txs = txs.slice().sort((a, b) => b.date.localeCompare(a.date));
   const groups = new Map();

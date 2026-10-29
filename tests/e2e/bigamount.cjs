@@ -1,0 +1,31 @@
+const { chromium } = require('playwright');
+const assert = require('assert');
+const BASE = process.env.BASE || 'http://localhost:8124/';
+(async () => {
+  const b = await chromium.launch();
+  const c = await b.newContext({ viewport: { width: 390, height: 844 }, locale: 'en-US' });
+  const p = await c.newPage(); const errs = []; p.on('pageerror', e => errs.push(e.message));
+  const d = new Date(); const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  await p.addInitScript(([day]) => localStorage.getItem('calibr.v2') || localStorage.setItem('calibr.v2', JSON.stringify({ v: 2, settings: { onboarded: true, locate: false }, categories: [{ id: 'g', emoji: '🛒', name: 'Groceries', limit: 400 }],
+    transactions: Array.from({ length: 15 }, (_, i) => ({ id: 't' + i, type: 'expense', amount: 15 + i, cat: 'g', date: day, note: 'x' + i })) })), [day]);
+  await p.goto(BASE); await p.waitForSelector('.hero');
+  await p.click('#fab'); await p.waitForSelector('#sheet[open] [name=amount]');
+  await p.fill('[name=amount]', '4500');
+  await p.click('.actions button[value=save]');
+  assert((await p.locator('#sheet[open]').count()) === 1, 'first save is paused');
+  assert((await p.locator('#bigwarn').innerText()).includes('a lot more than usual'), 'warning shown');
+  await p.fill('[name=amount]', '45');
+  await p.click('.actions button[value=save]');
+  await p.waitForSelector('#sheet:not([open])', { state: 'attached' });
+  console.log('  ✓ a slipped decimal is caught; correcting it saves normally');
+  await p.click('#fab'); await p.fill('[name=amount]', '4500'); await p.click('.actions button[value=save]');
+  assert((await p.locator('#sheet[open]').count()) === 1);
+  await p.click('.actions button[value=save]');
+  await p.waitForSelector('#sheet:not([open])', { state: 'attached' });
+  console.log('  ✓ a genuinely large amount saves on the second tap');
+  await p.click('[data-tab=activity]'); await p.fill('#q', '45.00');
+  assert((await p.locator('#txlist li').count()) === 1, 'amount search');
+  console.log('  ✓ search finds purchases by amount');
+  assert.deepStrictEqual(errs, []);
+  await b.close(); console.log('BIGAMOUNT OK');
+})().catch(e => { console.error('FAIL', e.message.split('\n')[0]); process.exit(1); });

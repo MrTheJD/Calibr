@@ -460,3 +460,14 @@ test('funding goes to essentials first, then the rest in order', () => {
   assert.equal(f.unfunded, 0, 'buffer draws count as money in hand');
   assert.equal(f.pool, 200);
 });
+
+test('amounts far above usual spending are flagged, ordinary ones are not', () => {
+  const s = state();
+  assert.equal(L.looksTooBig(s, 5000), null, 'too little history to judge');
+  s.transactions = Array.from({ length: 15 }, (_, i) => tx('2026-10-01', 15 + i, null));
+  assert.equal(L.looksTooBig(s, 4500).median, 22);
+  assert.equal(L.looksTooBig(s, 150), null, 'below the floor');
+  assert.equal(L.looksTooBig(s, 180), null);
+  s.transactions.push(...Array.from({ length: 30 }, () => tx('2026-10-02', 300, null)));
+  assert.equal(L.looksTooBig(s, 900), null, 'normal for someone who spends in the hundreds');
+});

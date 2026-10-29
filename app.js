@@ -686,6 +686,8 @@ const views = {
       incomeLine = inc > 0 ? `<span>Plan ${money(inc)} · received ${money(IS.earned)}${IS.drawn > 0 ? ` + ${money(IS.drawn)} buffer` : ''}</span>${unassignedTxt}`
         : `<button class="link small" data-act="tab" data-tab="settings">Set a starting income estimate →</button><span></span>`;
       const buf = L.bufferGoal(S);
+      const eTot = L.round2(S.categories.filter(c => c.essential).reduce((sum, c) => sum + L.limitFor(S, c, ui.month), 0));
+      if (eTot > 0) { const short = L.round2(eTot - IS.earned - IS.drawn); incomeLine += `</div><div class="sub"><span>Essentials ${money(eTot)}</span><span class="${short > 0 ? 'warn' : 'good'}">${short > 0 ? `${money(short)} still to cover` : '✓ covered'}</span>`; }
       if (inc > 0 && IS.surplus > 0) incomeHint = `<div class="hint">💰 <b>${money(IS.surplus)}</b> above your plan. <button class="link" data-act="tobuffer">Save it in your buffer</button></div>`;
       else if (inc > 0 && IS.gap > 0) incomeHint = `<div class="hint">${money(IS.gap)} to go to reach your plan.${cur ? ` <button class="link" data-act="lean">Plan a lean month</button>` : ''}${cur && buf?.saved > 0 ? ` <button class="link" data-act="usebuffer">Use buffer</button>` : ''}</div>`;
     } else {
@@ -785,7 +787,7 @@ const views = {
     const st = S.settings;
     return `<h1 class="pagetitle">Settings</h1>
       <h2>Money</h2><div class="list">
-        <div class="setrow"><label for="s-mode">My pay is</label><select id="s-mode" data-bind="incomeMode"><option value="steady" ${st.incomeMode === 'steady' ? 'selected' : ''}>Steady</option><option value="varies" ${st.incomeMode === 'varies' ? 'selected' : ''}>Different each time</option></select></div>
+        <div class="setrow"><label for="s-mode">My pay is</label><select id="s-mode" data-bind="incomeMode"><option value="steady" ${st.incomeMode === 'steady' ? 'selected' : ''}>Steady</option><option value="varies" ${st.incomeMode === 'varies' ? 'selected' : ''}>It varies</option></select></div>
         <div class="setrow"><label for="s-income">${st.incomeMode === 'varies' ? 'Starting estimate (a low month)' : 'Monthly income'}</label><input id="s-income" data-bind="income" type="number" inputmode="decimal" step="any" min="0" value="${st.income || ''}" placeholder="0"></div>
         ${st.incomeMode === 'varies' ? `<div class="setrow"><label for="s-plan">Plan on (monthly)</label><input id="s-plan" data-bind="planOverride" type="number" inputmode="decimal" step="any" min="0" value="${st.planOverride || ''}" placeholder="${L.baselineIncome(S, ui.month) || 'auto'}"></div>
         <div class="setrow"><span class="mute small">${st.planOverride ? 'Using your number. Clear it to let Calibr choose.' : L.baselineIncome(S, ui.month) ? `Auto: ${money(L.baselineIncome(S, ui.month))}, the average of your lower recent months. It adjusts as you log income.` : 'Until you have two months of income logged, Calibr uses your starting estimate.'}</span></div>` : ''}

@@ -68,6 +68,9 @@ The app is served at `https://<your-username>.github.io/Calibr/`.
 
 ## Install on your phone
 
+Requires a reasonably current browser (iOS/iPadOS 15.4+, or recent Chrome/Edge/Firefox on Android and desktop).
+
+
 - **iPhone (Safari):** Share → Add to Home Screen
 - **Android (Chrome):** menu → Install app / Add to Home screen
 

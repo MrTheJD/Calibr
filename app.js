@@ -385,6 +385,33 @@ function autoChange(msg, fn) {
   autoSheet(msg);
 }
 
+// ---- location check ----
+function diagSheet() {
+  openSheet(`<h3>Location check</h3><p class="mute small" style="margin:0 0 8px">Shows what Calibr sees right now. Nothing is saved.</p><div id="diag" class="small"></div>
+    <div class="actions"><button class="btn" type="button" data-act="diag">Run again</button><button class="btn primary" value="cancel" formnovalidate>Done</button></div>`);
+  const out = $('diag'), rows = [];
+  const show = () => { out.innerHTML = rows.map(([k, v, ok]) => `<div class="setrow" style="padding:8px 0"><span>${k}</span><span class="${ok === true ? 'good' : ok === false ? 'over' : 'mute'}" style="text-align:right;max-width:65%">${v}</span></div>`).join(''); };
+  rows.push(['Secure page (https)', window.isSecureContext ? 'Yes' : 'No: location needs https', window.isSecureContext]);
+  rows.push(['Location in Calibr settings', S.settings.locate ? 'On' : 'Off', S.settings.locate]);
+  show();
+  navigator.permissions?.query({ name: 'geolocation' }).then(r => { rows.push(['Browser permission', r.state === 'granted' ? 'Allowed' : r.state === 'denied' ? 'Blocked' : 'Will ask', r.state === 'granted' ? true : r.state === 'denied' ? false : null]); show(); }).catch(() => {});
+  if (!navigator.geolocation) { rows.push(['GPS', 'Not available in this browser', false]); show(); return; }
+  const gps = ['GPS', 'Looking…', null];
+  rows.push(gps); show();
+  navigator.geolocation.getCurrentPosition(async pos => {
+    const fix = { lat: pos.coords.latitude, lng: pos.coords.longitude, acc: pos.coords.accuracy };
+    gps[0] = 'GPS fix'; gps[1] = `±${Math.round(fix.acc)} m`; gps[2] = fix.acc <= 50 ? true : fix.acc <= 150 ? null : false; show();
+    await ensurePack(fix);
+    rows.push(['Places data', packs.entry ? `${esc(packs.entry.label)}, ${packs.entry.places.toLocaleString()} places` : (packs.list?.length ? 'None covers this spot' : 'None installed'), !!packs.entry]);
+    const res = L.suggest(S, fix, packs.index, 0);
+    rows.push(['Nearby', res.cands.length ? res.cands.map(c => `${esc(c.name)} (${Math.round(c.d)} m)`).join('<br>') : 'Nothing listed within range', res.cands.length ? true : null]);
+    const top = res.ranked.filter(r => r.p > 0 && catOf(r.catId));
+    rows.push(['Would suggest', top.length ? top.map(r => `${esc(catOf(r.catId).name)} ${Math.round(r.p * 100)}%`).join(', ') : 'Nothing yet', null]);
+    rows.push(['Would auto-file', L.decide(res, S.settings.level, fix, S.learn.stats) === 'auto' ? 'Yes' : 'No, it would ask you', null]);
+    show();
+  }, err => { gps[1] = err.code === 1 ? 'Blocked. Allow location for this site in your browser or phone settings.' : err.code === 3 ? 'Timed out. Try outdoors or near a window.' : 'Unavailable'; gps[2] = false; show(); }, { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 });
+}
+
 // ---- variable income ----
 function ensureBuffer(plan) {
   let g = L.bufferGoal(S);
@@ -768,6 +795,7 @@ const views = {
         <div class="setrow"><label for="s-loc">Use location to suggest categories</label><input id="s-loc" data-bind="locate" type="checkbox" ${st.locate ? 'checked' : ''} style="width:22px;height:22px;accent-color:var(--brand)"></div>
         <div class="setrow"><label for="s-quick">Open straight to Add</label><input id="s-quick" data-bind="quickOpen" type="checkbox" ${st.quickOpen ? 'checked' : ''} style="width:22px;height:22px;accent-color:var(--brand)"></div>
         <div class="setrow"><label for="s-level">Auto-file when</label><select id="s-level" data-bind="level"><option value="cautious" ${st.level === 'cautious' ? 'selected' : ''}>Very sure</option><option value="balanced" ${st.level === 'balanced' ? 'selected' : ''}>Fairly sure</option><option value="eager" ${st.level === 'eager' ? 'selected' : ''}>Pretty sure</option></select></div>
+        <div class="setrow"><span>Check that it's working</span><button class="link" data-act="diag">Test location</button></div>
         <div class="setrow"><span>Places data</span><span class="mute small" style="text-align:right;max-width:60%">${placesStatus()}</span></div>
         ${packBuilderUrl() ? `<div class="setrow"><span>Add places for my area</span><a class="link" href="${packBuilderUrl()}" target="_blank" rel="noopener">Open ›</a></div>` : ''}
         <div class="setrow"><span>Learned so far</span><span class="mute small">${plural(Object.keys(S.learn.merchants).length, 'place')} · ${plural(S.learn.spots.length, 'spot')}</span></div>
@@ -868,6 +896,7 @@ const actions = {
   autoreview: () => autoSheet(),
   confirm: el => { const t = S.transactions.find(x => x.id === el.dataset.id); if (t) autoChange('Confirmed', () => { delete t.auto; S.learn.stats.confirmed++; }); },
   confirmall: () => { const list = L.autoUnconfirmed(S, L.todayStr()).slice(0, 12); autoChange(`Confirmed ${list.length}`, () => list.forEach(t => { delete t.auto; S.learn.stats.confirmed++; })); },
+  diag: () => diagSheet(),
   tobuffer: () => bufferSheet(),
   usebuffer: () => useBuffer(),
   lean: () => leanSheet(),

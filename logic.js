@@ -310,15 +310,23 @@ const WALK_IN = { grocery: 1.2, dining: 1.2, coffee: 1.2, fuel: 1.2, shopping: 1
 
 // Stores whose receipts span several kinds of spending: never trust the brand alone.
 export const MULTI = [
-  [/walmart|wal-mart/i, { grocery: 0.5, shopping: 0.3, home: 0.2 }],
-  [/\btarget\b/i, { shopping: 0.5, grocery: 0.3, home: 0.2 }],
-  [/costco|sam'?s club|bj'?s wholesale/i, { grocery: 0.5, shopping: 0.3, fuel: 0.2 }],
-  [/\bcvs\b|walgreens|rite aid|duane reade/i, { health: 0.5, shopping: 0.3, grocery: 0.2 }],
+  [/walmart|wal-mart/i, { grocery: 0.5, shopping: 0.3, home: 0.2 }, 'walmart'],
+  [/\btarget\b/i, { shopping: 0.5, grocery: 0.3, home: 0.2 }, 'target'],
+  [/costco/i, { grocery: 0.5, shopping: 0.3, fuel: 0.2 }, 'costco'],
+  [/sam'?s club/i, { grocery: 0.5, shopping: 0.3, fuel: 0.2 }, 'sams club'],
+  [/bj'?s wholesale/i, { grocery: 0.5, shopping: 0.3, fuel: 0.2 }, 'bjs wholesale'],
+  [/\bcvs\b/i, { health: 0.5, shopping: 0.3, grocery: 0.2 }, 'cvs'],
+  [/walgreens|duane reade/i, { health: 0.5, shopping: 0.3, grocery: 0.2 }, 'walgreens'],
+  [/rite aid/i, { health: 0.5, shopping: 0.3, grocery: 0.2 }, 'rite aid'],
   [/7-eleven|7 eleven|circle k|wawa|sheetz|quiktrip|speedway|casey'?s/i, { fuel: 0.4, grocery: 0.35, coffee: 0.25 }],
 ];
 
 export const normName = s => String(s || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/['’`]/g, '').replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').replace(/ #?\d+$/, '').trim();
-export const merchantKey = p => normName(p.brand || p.name);
+// Departments and branches of the same chain (Walmart Pharmacy, Walmart Supercenter...) share one history.
+export const merchantKey = p => {
+  const m = MULTI.find(([re]) => re.test(`${p.brand || ''} ${p.name || ''}`));
+  return m?.[2] || normName(p.brand || p.name);
+};
 
 export function distanceM(lat1, lng1, lat2, lng2) {
   const dy = (lat2 - lat1) * 111320, dx = (lng2 - lng1) * 111320 * Math.cos(((lat1 + lat2) / 2) * Math.PI / 180);
@@ -327,13 +335,16 @@ export function distanceM(lat1, lng1, lat2, lng2) {
 
 // Pack format: { v:1, name, bbox:[w,s,e,n], kinds:[...], places:[[lat*1e5, lng*1e5, name, kindIndex, brand], ...] }
 const CELL = 0.002; // ~220 m
+const FUEL_BRANDS = /\b(murphy (usa|express)|shell|exxon|mobil|chevron|conoco|sinclair|valero|phillips 66|bp|texaco|marathon|citgo|sunoco|kum & go|pilot|flying j|love'?s travel)\b/i;
 export function buildIndex(pack) {
   const grid = new Map();
   let count = 0;
   for (const r of pack.places || []) {
-    const kind = pack.kinds?.[r[3]];
+    let kind = pack.kinds?.[r[3]];
     if (!kind) continue;
     const p = { lat: r[0] / 1e5, lng: r[1] / 1e5, name: String(r[2] || ''), kind, brand: r[4] ? String(r[4]) : '' };
+    // Map data often files fuel stops under "convenience store".
+    if ((kind === 'grocery' || kind === 'shopping' || kind === 'transport') && FUEL_BRANDS.test(`${p.brand} ${p.name}`)) p.kind = 'fuel';
     if (!p.name) continue;
     const k = `${Math.floor(p.lat / CELL)},${Math.floor(p.lng / CELL)}`;
     (grid.get(k) || grid.set(k, []).get(k)).push(p);

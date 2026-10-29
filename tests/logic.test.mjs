@@ -412,3 +412,16 @@ test('buffer draws cover the gap to the plan but never count as earnings', () =>
   const st = L.incomeStatus(s, '2026-10');
   assert.deepEqual([st.earned, st.drawn, st.gap, st.surplus], [800, 500, 700, 0]);
 });
+
+test('all departments of a big-box chain share one merchant key', () => {
+  for (const n of ['Walmart Supercenter', 'Walmart Pharmacy', 'Walmart Neighborhood Market', 'Wal-Mart #12']) assert.equal(L.merchantKey({ name: n }), 'walmart');
+  assert.equal(L.merchantKey({ name: "Sam's Club Optical" }), 'sams club');
+  assert.equal(L.merchantKey({ name: 'Harps Food Stores' }), 'harps food stores');
+});
+
+test('well-known fuel brands filed as convenience stores are treated as fuel stops', () => {
+  const s = state();
+  const idx = L.buildIndex(pack([poi('Murphy USA', 'grocery', 0.00003), poi('Corner Deli', 'grocery', 0.0004)]));
+  const r = L.suggest(s, fix(), idx);
+  assert.equal(r.ranked[0].catId, cat(s, 'Gas'));
+});

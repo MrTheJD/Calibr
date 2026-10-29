@@ -168,7 +168,7 @@ const dateField = (value, name = 'date', label = 'Date') => `<div class="field">
 const cap = { picked: null, res: null };
 function captureHTML() {
   cap.amount = parseFloat(document.querySelector('#sheet [name=amount]')?.value) || 0;
-  const res = cap.res = L.suggest(S, geo.fix, packs.index, cap.amount);
+  const res = cap.res = L.suggest(S, geo.fix, packs.index, cap.amount, new Date().getHours());
   const fix = geo.fix;
   let line;
   if (geo.state === 'off') line = '📍 Location is off. <button type="button" class="link" data-act="enableloc">Turn on</button>';
@@ -252,7 +252,7 @@ function txSheet(tx, preset = {}) {
 
     // New transaction: decide whether it can be filed by itself.
     const fix = geo.fix && t === 'expense' ? geo.fix : null;
-    const res = L.suggest(S, geo.fix, packs.index, amount); // recompute with the final amount
+    const res = L.suggest(S, geo.fix, packs.index, amount, new Date().getHours()); // recompute with the final amount
     const place = res?.place && res.place.p >= 0.35 ? { key: res.place.key, name: res.place.name } : null;
     const base = { id: L.uid(), type: t, amount, cat: null, note, date };
     if (t === 'expense' && fix && fix.acc <= 150) {
@@ -403,7 +403,7 @@ function diagSheet() {
     gps[0] = 'GPS fix'; gps[1] = `±${Math.round(fix.acc)} m`; gps[2] = fix.acc <= 50 ? true : fix.acc <= 150 ? null : false; show();
     await ensurePack(fix);
     rows.push(['Places data', packs.entry ? `${esc(packs.entry.label)}, ${packs.entry.places.toLocaleString()} places` : (packs.list?.length ? 'None covers this spot' : 'None installed'), !!packs.entry]);
-    const res = L.suggest(S, fix, packs.index, 0);
+    const res = L.suggest(S, fix, packs.index, 0, new Date().getHours());
     rows.push(['Nearby', res.cands.length ? res.cands.map(c => `${esc(c.name)} (${Math.round(c.d)} m)`).join('<br>') : 'Nothing listed within range', res.cands.length ? true : null]);
     const top = res.ranked.filter(r => r.p > 0 && catOf(r.catId));
     rows.push(['Would suggest', top.length ? top.map(r => `${esc(catOf(r.catId).name)} ${Math.round(r.p * 100)}%`).join(', ') : 'Nothing yet', null]);
@@ -707,7 +707,7 @@ const views = {
       <div class="sub"><span>${money(B.spent)} spent</span><span>of ${money(B.budget)}</span></div>
       <div class="sub">${incomeLine}</div>${hint ? `<div class="hint">${hint}</div>` : ''}${incomeHint}</section>
       ${autoCard}
-      ${upcoming.length ? `<h2>Coming up</h2><ul class="list">${upcoming.map(r => {
+      ${upcoming.length ? `<h2>Coming up <span class="mute" style="text-transform:none;letter-spacing:0">${(() => { const out = L.round2(upcoming.filter(r => r.type === 'expense').reduce((x, r) => x + r.amount, 0)), inn = L.round2(upcoming.filter(r => r.type === 'income').reduce((x, r) => x + r.amount, 0)); return [out ? `${money(out)} due` : '', inn ? `${money(inn)} expected` : ''].filter(Boolean).join(' · '); })()}</span></h2><ul class="list">${upcoming.map(r => {
         const d = L.daysBetween(today, r.next);
         return `<li><button class="rowbtn" data-act="rec" data-id="${r.id}"><div class="row"><span class="emoji">${r.type === 'income' ? '💵' : catOf(r.cat)?.emoji ?? '🔁'}</span><span class="grow"><div class="title">${esc(r.note)}</div><div class="small mute">${d === 1 ? 'Tomorrow' : `In ${plural(d, 'day')}`}</div></span><span class="amt ${r.type === 'income' ? 'inc' : ''}">${r.type === 'income' ? '+' : ''}${money(r.amount)}</span></div></button></li>`;
       }).join('')}</ul>` : ''}

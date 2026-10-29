@@ -309,6 +309,15 @@ export function catForKind(s, kind) {
 // How likely a stop at this kind of place is to involve spending (offices and clinics are mostly just buildings).
 const WALK_IN = { grocery: 1.2, dining: 1.2, coffee: 1.2, fuel: 1.2, shopping: 1, home: 1, entertainment: 0.9, pets: 0.9, fitness: 0.8, transport: 0.8, personal: 0.7, travel: 0.6, health: 0.6, education: 0.4, services: 0.4 };
 
+// When people tend to buy what: breaks ties between, say, a café and a restaurant in the same building. hour < 0 = unknown.
+const timeFactor = (kind, h) => {
+  if (h < 0) return 1;
+  if (kind === 'coffee') return h < 11 ? 1.4 : h < 15 ? 0.9 : 0.6;
+  if (kind === 'dining') return (h >= 11 && h < 15) || (h >= 17 && h < 22) ? 1.25 : h < 10 ? 0.6 : 0.9;
+  if (kind === 'entertainment') return h >= 17 ? 1.2 : 0.9;
+  return 1;
+};
+
 // Stores whose receipts span several kinds of spending: never trust the brand alone.
 export const MULTI = [
   [/walmart|wal-mart/i, { grocery: 0.5, shopping: 0.3, home: 0.2 }, 'walmart'],
@@ -408,14 +417,14 @@ function habitual(s) {
 }
 
 // fix: { lat, lng, acc } | null. Returns ranked category guesses and an honest confidence.
-export function suggest(s, fix, index, amount = 0) {
+export function suggest(s, fix, index, amount = 0, hour = -1) {
   const none = { ranked: habitual(s), conf: 0, margin: 0, place: null, cands: [], acc: fix?.acc ?? null, spot: null };
   if (!fix || !s.categories.length) return none;
   const acc = Math.min(500, Math.max(5, fix.acc || 50)), sigma = Math.max(acc, 20);
   const radius = Math.min(150, Math.max(40, acc * 2));
   const cands = nearby(index, fix.lat, fix.lng, radius).map(c => {
     const m = s.learn.merchants[merchantKey(c)];
-    return { ...c, key: merchantKey(c), w: Math.exp(-0.5 * (c.d / sigma) ** 2) * (WALK_IN[c.kind] ?? 1) * (1 + 0.4 * Math.log1p(m?.n || 0)) };
+    return { ...c, key: merchantKey(c), w: Math.exp(-0.5 * (c.d / sigma) ** 2) * (WALK_IN[c.kind] ?? 1) * timeFactor(c.kind, hour) * (1 + 0.4 * Math.log1p(m?.n || 0)) };
   }).sort((a, b) => b.w - a.w).slice(0, 8);
   const UNKNOWN = TUNING.unknown; // always leave some chance that it's somewhere we don't list
   const total = cands.reduce((a, c) => a + c.w, 0) + UNKNOWN;

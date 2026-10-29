@@ -1,0 +1,31 @@
+const { chromium } = require('playwright');
+const BASE = process.env.BASE || 'http://localhost:8124/';
+const SP = process.env.OUT || require('os').tmpdir();
+const FIX = require('path').join(__dirname, '../fixtures/packs');
+const assert = require('assert'); const fs = require('fs');
+const pack = JSON.parse(fs.readFileSync(FIX + '/nwa-test.json'));
+const harps = pack.places.find(r => /^harps food stores$/i.test(r[2]));
+(async () => {
+  const b = await chromium.launch();
+  const c = await b.newContext({ viewport: { width: 390, height: 844 }, locale: 'en-US', geolocation: { latitude: harps[0] / 1e5, longitude: harps[1] / 1e5, accuracy: 15 }, permissions: ['geolocation'] });
+  const p = await c.newPage(); const errs = []; p.on('pageerror', e => errs.push(e.message));
+  await p.addInitScript(() => localStorage.setItem('calibr.v2', JSON.stringify({ v: 2, settings: { onboarded: true }, categories: [{ id: 'g', emoji: '🛒', name: 'Groceries', limit: 400 }, { id: 'f', emoji: '⛽', name: 'Gas', limit: 100 }] })));
+  await p.goto(BASE); await p.waitForSelector('.hero');
+  await p.click('[data-tab=settings]');
+  await p.click('[data-act=diag]');
+  await p.waitForFunction(() => document.querySelector('#diag')?.innerText.includes('Would suggest'), null, { timeout: 15000 });
+  await p.waitForTimeout(300);
+  const t = await p.locator('#diag').innerText();
+  console.log(t.replace(/\n+/g, ' | '));
+  assert(t.includes('Allowed') && t.includes('±15 m') && t.includes('Northwest Arkansas') && /Harps Food Stores/.test(t) && t.includes('Groceries'), t);
+  await p.screenshot({ path: `${SP}/40-diag.png` });
+  assert.deepStrictEqual(errs, []);
+  // denied path
+  const c2 = await b.newContext({ viewport: { width: 390, height: 844 }, locale: 'en-US' });
+  const q = await c2.newPage();
+  await q.addInitScript(() => { localStorage.setItem('calibr.v2', JSON.stringify({ v: 2, settings: { onboarded: true } })); navigator.geolocation.getCurrentPosition = (ok, err) => err({ code: 1 }); });
+  await q.goto(BASE); await q.waitForSelector('#view .card');
+  await q.click('[data-tab=settings]'); await q.click('[data-act=diag]');
+  await q.waitForFunction(() => document.querySelector('#diag')?.innerText.includes('Blocked'), null, { timeout: 5000 });
+  await b.close(); console.log('E2E5 OK');
+})().catch(e => { console.error('FAIL', e.message); process.exit(1); });

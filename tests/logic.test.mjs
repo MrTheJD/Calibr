@@ -527,3 +527,18 @@ test('hostile backups cannot smuggle markup through ids or emoji', () => {
   assert.equal(s.transactions[0].cat, s.categories[0].id, 'references follow the cleaned id');
   assert.match(s.settings.lastCat ?? 'x', safe);
 });
+
+test('week summary compares the same stretch of this and last week', () => {
+  const s = state();
+  // 2026-10-29 is a Thursday: this week started Monday the 26th, last week Monday the 19th (compare 19th..22nd)
+  s.transactions = [tx('2026-10-26', 30, cat(s, 'Groceries')), tx('2026-10-28', 50, cat(s, 'Fun')), tx('2026-10-29', 25, cat(s, 'Groceries')),
+    tx('2026-10-19', 40, cat(s, 'Groceries')), tx('2026-10-22', 10, cat(s, 'Fun')), tx('2026-10-24', 500, cat(s, 'Fun')), tx('2026-10-27', 99, null, 'income')];
+  const w = L.weekSummary(s, '2026-10-29');
+  assert.equal(w.start, '2026-10-26');
+  assert.equal(w.thisWeek, 105);
+  assert.equal(w.lastWeek, 50, 'only Mon-Thu of last week, so the weekend spend is not counted');
+  assert.equal(w.topCat, cat(s, 'Groceries'));
+  assert.equal(w.topAmount, 55);
+  assert.equal(w.days, 4);
+  assert.equal(L.weekSummary(s, '2026-11-01').start, '2026-10-26', 'Sunday belongs to the week that started Monday');
+});

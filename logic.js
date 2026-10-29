@@ -644,3 +644,16 @@ export function detectRecurring(s, today) {
   }
   return out.sort((a, b) => b.count - a.count).slice(0, 3);
 }
+
+const weekStart = d => addDays(d, -((parse(d).getDay() + 6) % 7)); // weeks start on Monday
+
+/** Spending so far this week against the same stretch of last week, plus this week's biggest category. */
+export function weekSummary(s, today) {
+  const start = weekStart(today), prevStart = addDays(start, -7), elapsed = daysBetween(start, today);
+  const prevEnd = addDays(prevStart, elapsed);
+  const sum = (from, to) => round2(s.transactions.filter(t => t.type === 'expense' && t.date >= from && t.date <= to).reduce((a, t) => a + t.amount, 0));
+  const byCat = new Map();
+  for (const t of s.transactions) if (t.type === 'expense' && t.date >= start && t.date <= today) { const k = s.categories.some(c => c.id === t.cat) ? t.cat : ''; byCat.set(k, (byCat.get(k) || 0) + t.amount); }
+  const top = [...byCat].sort((a, b) => b[1] - a[1])[0];
+  return { start, thisWeek: sum(start, today), lastWeek: sum(prevStart, prevEnd), topCat: top && top[0] ? top[0] : null, topAmount: top ? round2(top[1]) : 0, days: elapsed + 1 };
+}

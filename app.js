@@ -796,6 +796,12 @@ const views = {
       <div class="stat"><div class="k">Income</div><div class="v good">${money(B.income)}</div></div>
       <div class="stat"><div class="k">Net</div><div class="v ${net < 0 ? 'over' : 'good'}">${net < 0 ? '−' : '+'}${money(Math.abs(net))}</div></div>
       <div class="stat"><div class="k">Daily average</div><div class="v">${money(B.spent / days)}</div></div></div>
+      ${cur ? (() => {
+        const w = L.weekSummary(S, today);
+        if (!w.thisWeek && !w.lastWeek) return '';
+        const diff = L.round2(w.thisWeek - w.lastWeek), c = catOf(w.topCat);
+        return `<h2>This week</h2><div class="card"><div class="row"><span><b>${money(w.thisWeek)}</b> spent so far</span>${w.lastWeek > 0 ? `<span class="small ${diff > 0 ? 'over' : 'good'}">${diff > 0 ? '▲' : '▼'} ${money(Math.abs(diff))} vs same days last week</span>` : ''}</div>${c ? `<div class="small mute" style="margin-top:6px">Most on ${c.emoji} ${esc(c.name)}: ${money(w.topAmount)}</div>` : ''}</div>`;
+      })() : ''}
       ${(() => {
         const st = L.incomeStats(S, ui.month);
         if (!st) return '';

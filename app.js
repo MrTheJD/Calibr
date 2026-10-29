@@ -34,7 +34,7 @@ function save() {
 }
 
 const periodNow = () => L.periodOf(S, L.todayStr());
-const ui = { tab: 'budget', month: periodNow(), q: '', type: 'all', cat: 'all' };
+const ui = { placesOpen: false, tab: 'budget', month: periodNow(), q: '', type: 'all', cat: 'all' };
 
 const nfCache = {};
 const money = n => (nfCache[S.settings.currency] ??= new Intl.NumberFormat(undefined, { style: 'currency', currency: S.settings.currency })).format(n);
@@ -900,13 +900,15 @@ const views = {
         <div class="setrow"><label for="s-loc">Use location to suggest categories</label><input id="s-loc" data-bind="locate" type="checkbox" ${st.locate ? 'checked' : ''} style="width:22px;height:22px;accent-color:var(--brand)"></div>
         <div class="setrow"><label for="s-quick">Open straight to Add</label><input id="s-quick" data-bind="quickOpen" type="checkbox" ${st.quickOpen ? 'checked' : ''} style="width:22px;height:22px;accent-color:var(--brand)"></div>
         <div class="setrow"><label for="s-level">Auto-file when</label><select id="s-level" data-bind="level"><option value="cautious" ${st.level === 'cautious' ? 'selected' : ''}>Very sure</option><option value="balanced" ${st.level === 'balanced' ? 'selected' : ''}>Fairly sure</option><option value="eager" ${st.level === 'eager' ? 'selected' : ''}>Pretty sure</option></select></div>
+      </div>
+      <details id="places-details" class="more" style="margin-top:10px" ${ui.placesOpen ? 'open' : ''}><summary>Places &amp; learning</summary><div class="list">
         <div class="setrow"><span>Check that it's working</span><button class="link" data-act="diag">Test location</button></div>
         <div class="setrow"><span>Places data</span><span id="places-status" class="mute small" style="text-align:right;max-width:60%">${placesStatus()}</span></div>
         ${packBuilderUrl() ? `<div class="setrow"><span>Add places for my area</span><a class="link" href="${packBuilderUrl()}" target="_blank" rel="noopener">Open ›</a></div>` : ''}
         <div class="setrow"><span>Learned so far</span><span class="mute small">${plural(Object.keys(S.learn.merchants).length, 'place')} · ${plural(S.learn.spots.length, 'spot')}</span></div>
         ${S.learn.stats.auto ? `<div class="setrow"><span>Auto-filed so far</span><span class="mute small" style="text-align:right">${S.learn.stats.auto} · ${S.learn.stats.confirmed} confirmed · ${S.learn.stats.fixed} fixed${S.learn.stats.fixed + S.learn.stats.confirmed >= 10 ? ` (${Math.round(L.correctionRate(S.learn.stats) * 100)}% wrong)` : ''}</span></div>` : ''}
         ${L.threshold(st.level, S.learn.stats) > L.THRESHOLDS[st.level] + 0.01 ? '<div class="setrow"><span class="warn small">Extra careful for now, because you have corrected a lot of automatic filings.</span></div>' : ''}
-        <div class="setrow"><span>Forget what Calibr learned</span><button class="link over" data-act="forget">Forget…</button></div></div>
+        <div class="setrow"><span>Forget what Calibr learned</span><button class="link over" data-act="forget">Forget…</button></div></div></details>
       <p class="mute small" style="margin:8px 4px 0">Anything Calibr isn't sure about goes to a review list instead of being filed. "Very sure" sends more there; "Pretty sure" sends fewer. Your location is only read while the add screen is open and never leaves this device. (On some iPhones you may be asked to allow location each time you open the app. Choose Allow.) The approximate spot (about 10 m) of each purchase is saved with it so Calibr can learn; "Forget" removes that.</p>
       <h2>Recurring &amp; bills <button class="link" data-act="addrec">+ Add</button></h2>
       ${S.recurring.length ? `<ul class="list">${S.recurring.map(r => `<li><button class="rowbtn" data-act="rec" data-id="${r.id}"><div class="row"><span class="emoji">${r.type === 'income' ? '💵' : catOf(r.cat)?.emoji ?? '🔁'}</span><span class="grow"><div class="title">${esc(r.note)}</div><div class="small mute">${L.FREQUENCIES[r.freq]} · next ${prettyDate(r.next)}</div></span><span class="amt ${r.type === 'income' ? 'inc' : ''}">${r.type === 'income' ? '+' : ''}${money(r.amount)}</span></div></button></li>`).join('')}</ul>`
@@ -1069,6 +1071,7 @@ document.addEventListener('change', ev => {
   else if (t.id === 'ftype') { ui.type = t.value; $('txlist').innerHTML = txList(); }
   else if (t.id === 'fcat') { ui.cat = t.value; $('txlist').innerHTML = txList(); }
 });
+document.addEventListener('toggle', e => { if (e.target.id === 'places-details') ui.placesOpen = e.target.open; }, true); // remembers the group's state across re-renders
 document.addEventListener('input', ev => {
   if (ev.target.id === 'q') { ui.q = ev.target.value; $('txlist').innerHTML = txList(); }
 });

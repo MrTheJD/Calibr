@@ -542,3 +542,9 @@ test('week summary compares the same stretch of this and last week', () => {
   assert.equal(w.days, 4);
   assert.equal(L.weekSummary(s, '2026-11-01').start, '2026-10-26', 'Sunday belongs to the week that started Monday');
 });
+
+test('absurd amounts are capped so they cannot break the layout', () => {
+  const s = L.sanitize({ settings: { income: 1e15, planOverride: 5e20, lastAmount: 1e12 }, categories: [{ id: 'a', name: 'A', limit: 1e30 }],
+    transactions: [{ id: 't', type: 'expense', amount: 1e18, cat: 'a', date: '2026-10-01' }], goals: [{ id: 'g', name: 'G', target: 1e25, saved: 1e22 }] });
+  for (const v of [s.settings.income, s.settings.planOverride, s.settings.lastAmount, s.categories[0].limit, s.transactions[0].amount, s.goals[0].target, s.goals[0].saved]) assert.equal(v, L.MAX_MONEY);
+});

@@ -11,6 +11,7 @@ const state = cur => ({ v: 2, settings: { onboarded: true, locate: false, curren
   // Yen: no decimals anywhere, enormous numbers still fit at 320px
   const c = await b.newContext({ viewport: { width: 320, height: 640 }, locale: 'ja-JP' });
   const p = await c.newPage(); p.on('pageerror', e => errs.push(e.message));
+  await p.addInitScript(() => addEventListener('DOMContentLoaded', () => { const st = document.createElement('style'); st.textContent = 'body,button,input,select{font-family:"DejaVu Sans Mono","Liberation Mono",monospace !important}'; document.head.append(st); })); // wide glyphs: the worst case for fitting numbers
   await p.addInitScript(s => localStorage.setItem('calibr.v2', JSON.stringify(s)), state('JPY'));
   await p.goto(BASE); await p.waitForSelector('.hero');
   const hero = await p.locator('.hero').innerText();

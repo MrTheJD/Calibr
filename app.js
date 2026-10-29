@@ -46,6 +46,7 @@ const prettyDate = s => {
 const catOf = id => S.categories.find(c => c.id === id);
 const level = pct => (pct >= 100 ? 'over' : pct >= 80 ? 'warn' : '');
 const bar = (pct, cls = '') => `<div class="bar ${cls.includes('thin') ? 'thin' : ''}"><i class="${cls.replace('thin', '').trim() || level(pct)}" style="width:${Math.max(0, Math.min(pct, 100))}%"></i></div>`;
+const clampAmt = n => (Number.isFinite(n) ? Math.min(L.MAX_MONEY, L.round2(n)) : NaN);
 const firstGlyph = s => {
   s = (s || '').trim();
   if (!s) return '';
@@ -140,6 +141,7 @@ function openSheet(html, onSubmit, onMount, primary = 'save') {
     if (!v || v === 'cancel') return;
     if (onSubmit(v, new FormData(form), form) === false) ev.preventDefault();
   };
+  form.querySelectorAll('input[type=number]:not([max])').forEach(i => { i.max = L.MAX_MONEY; });
   $('toast').hidden = true;
   if (!sheet.open) sheet.showModal();
   onMount?.(form);
@@ -246,7 +248,7 @@ function txSheet(tx, preset = {}) {
       <button class="btn primary" value="save">${editing ? 'Save' : 'Add'}</button></div>`,
   (v, fd) => {
     if (v === 'delete') { change('Transaction deleted', () => { L.unlearnFiling(S, tx); S.transactions = S.transactions.filter(t => t.id !== tx.id); }); return; }
-    const amount = L.round2(parseFloat(fd.get('amount')));
+    const amount = clampAmt(parseFloat(fd.get('amount')));
     if (!(amount > 0)) return false;
     const t = fd.get('type') === 'income' ? 'income' : 'expense';
     const note = String(fd.get('note') || '').trim(), date = fd.get('date');
@@ -467,7 +469,7 @@ function bufferSheet() {
     <div class="field"><label for="f-amount" class="vh">Amount</label><input id="f-amount" class="amount" name="amount" type="number" inputmode="decimal" step="any" min="0.01" max="${IS.surplus}" value="${IS.surplus}" required></div>
     <div class="actions"><button class="btn" value="cancel" formnovalidate>Not now</button><button class="btn primary" value="save">Move to buffer</button></div>`,
   (v, fd) => {
-    const amt = Math.min(IS.surplus, L.round2(parseFloat(fd.get('amount'))));
+    const amt = Math.min(IS.surplus, clampAmt(parseFloat(fd.get('amount'))));
     if (!(amt > 0)) return false;
     change(`Saved ${money(amt)} in your buffer`, () => {
       ensureBuffer(IS.plan).saved = L.round2(ensureBuffer(IS.plan).saved + amt);
@@ -619,7 +621,7 @@ function fundSheet(goal) {
     <div class="field"><label for="f-amount" class="vh">Amount</label><input id="f-amount" class="amount" name="amount" type="number" inputmode="decimal" step="any" min="0.01" placeholder="0.00" required></div>
     <div class="actions"><button class="btn" value="withdraw">Withdraw</button><button class="btn primary" value="add">Add</button></div>`,
   (v, fd) => {
-    const amt = L.round2(parseFloat(fd.get('amount')));
+    const amt = clampAmt(parseFloat(fd.get('amount')));
     if (!(amt > 0)) return false;
     change(v === 'add' ? `Added ${money(amt)} to ${goal.name}` : `Withdrew ${money(amt)}`, () => {
       goal.saved = Math.max(0, L.round2(goal.saved + (v === 'add' ? amt : -amt)));
@@ -644,7 +646,7 @@ function recSheet(rec) {
       <button class="btn primary" value="save">Save</button></div>`,
   (v, fd) => {
     if (v === 'delete') { change('Recurring item deleted', () => { S.recurring = S.recurring.filter(r => r.id !== rec.id); }); return; }
-    const amount = L.round2(parseFloat(fd.get('amount'))), note = String(fd.get('note')).trim();
+    const amount = clampAmt(parseFloat(fd.get('amount'))), note = String(fd.get('note')).trim();
     if (!(amount > 0) || !note) return false;
     const t = fd.get('type') === 'income' ? 'income' : 'expense';
     const next = fd.get('next');
@@ -907,6 +909,7 @@ function render() {
   document.querySelectorAll('#nav button').forEach(b => { b.classList.toggle('on', b.dataset.tab === ui.tab); b.setAttribute('aria-current', b.dataset.tab === ui.tab ? 'page' : 'false'); });
   document.querySelector('#nav [data-tab=budget]').dataset.badge = L.reviewList(S).length || '';
   $('view').innerHTML = (monthTab ? `<h1 class="vh">${{ budget: 'Budget', activity: 'Activity', insights: 'Insights' }[ui.tab]} for ${monthLabel(ui.month)}</h1>` : '') + views[ui.tab]();
+  document.querySelectorAll('#view input[type=number]:not([max])').forEach(i => { i.max = L.MAX_MONEY; });
   applyTheme();
 }
 
@@ -1005,9 +1008,9 @@ document.addEventListener('change', ev => {
     return;
   }
   const bind = t.dataset?.bind;
-  if (bind === 'income') { S.settings.income = Math.max(0, L.round2(parseFloat(t.value) || 0)); save(); toast('Income saved'); }
+  if (bind === 'income') { S.settings.income = Math.min(L.MAX_MONEY, Math.max(0, L.round2(parseFloat(t.value) || 0))); save(); toast('Income saved'); }
   else if (bind === 'incomeMode') { S.settings.incomeMode = t.value; save(); render(); }
-  else if (bind === 'planOverride') { S.settings.planOverride = Math.max(0, L.round2(parseFloat(t.value) || 0)); save(); render(); }
+  else if (bind === 'planOverride') { S.settings.planOverride = Math.min(L.MAX_MONEY, Math.max(0, L.round2(parseFloat(t.value) || 0))); save(); render(); }
   else if (bind === 'currency') { S.settings.currency = t.value; save(); render(); }
   else if (bind === 'locate') { S.settings.locate = t.checked; save(); }
   else if (bind === 'quickOpen') { S.settings.quickOpen = t.checked; save(); }

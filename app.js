@@ -191,7 +191,18 @@ function captureHTML() {
   else if (fix && res.place && top && top.p >= 0.4 && res.margin >= 0.15 && (S.learn.merchants[res.place.key]?.n || 0) < 3) hint = `<span class="warn">New here? Tap <b>${esc(catOf(top.catId).name)}</b> if that's right. After a few visits Calibr will file it by itself.</span>`;
   else if (fix || geo.state === 'off' || geo.state === 'denied') hint = '<span class="warn">Not sure enough to file this by itself — tap a category, or save it and pick later.</span>';
   const chips = res.ranked.map(r => { const c = catOf(r.catId); return c ? `<button type="button" class="chipbtn ${cap.picked === c.id ? 'on' : ''}" data-act="pick" data-id="${c.id}">${c.emoji} ${esc(c.name)}${r.p >= 0.3 ? ` <span class="pct">${Math.round(r.p * 100)}%</span>` : ''}</button>` : ''; }).join('');
-  return `<div class="capline">${line}</div>${chips ? `<div class="chips tight">${chips}</div>` : ''}${hint ? `<div class="small caphint">${hint}</div>` : ''}`;
+  // With no place to go on, offer the things you log most often: one tap fills the note and category.
+  let recents = '';
+  if (!res.place || res.place.p < 0.35) {
+    const seen = new Map();
+    for (const t of S.transactions.slice(-60).reverse()) {
+      const label = t.note || t.merchant; if (t.type !== 'expense' || !t.cat || !label || !catOf(t.cat)) continue;
+      const k = label.toLowerCase(); const e = seen.get(k) ?? { label, cat: t.cat, n: 0 }; e.n++; seen.set(k, e);
+    }
+    const top = [...seen.values()].sort((a, b) => b.n - a.n).slice(0, 5);
+    if (top.length) recents = `<div class="small mute" style="margin:10px 2px 4px">Recent</div><div class="chips tight">${top.map(e => `<button type="button" class="chipbtn ghost" data-act="recent" data-note="${esc(e.label)}" data-cat="${e.cat}">${catOf(e.cat).emoji} ${esc(e.label)}</button>`).join('')}</div>`;
+  }
+  return `<div class="capline">${line}</div>${chips ? `<div class="chips tight">${chips}</div>` : ''}${hint ? `<div class="small caphint">${hint}</div>` : ''}${recents}`;
 }
 function refreshCapture() {
   const el = $('capture');
@@ -715,9 +726,11 @@ const views = {
     const nReview = L.reviewList(S).length;
     const nAuto = L.autoUnconfirmed(S, today).length;
     const autoCard = nAuto ? `<button class="card autocard" data-act="autoreview"><span class="emoji">📍</span><span class="grow">${plural(nAuto, 'purchase')} filed automatically<br><span class="small mute">Glance over ${nAuto === 1 ? 'it' : 'them'} so Calibr learns what it got right</span></span><span class="link">Check ›</span></button>` : '';
+    const iosBrowser = /iPhone|iPad|iPod/.test(navigator.userAgent) && !navigator.standalone && !matchMedia('(display-mode: standalone)').matches;
+    const installCard = iosBrowser && !S.settings.installDismissed ? `<div class="card autocard"><span class="emoji">📲</span><span class="grow"><b>Add Calibr to your Home Screen</b><br><span class="small mute">Tap the Share button, then “Add to Home Screen”. iPhone can clear a website's data after a week away, but not an app on your Home Screen.</span></span><button class="del" data-act="dismissinstall" aria-label="Dismiss">✕</button></div>` : '';
     const backupCard = L.backupDue(S, today) ? `<div class="card autocard"><span class="emoji">💾</span><span class="grow">Back up your data<br><span class="small mute">It only lives on this phone. Save a copy so you never lose it.</span></span><button class="btn primary" data-act="exportjson">Back up</button></div>` : '';
     const banner = nReview ? `<button class="card banner" data-act="review"><span class="emoji">📥</span><span class="grow"><b>${plural(nReview, 'purchase')} need${nReview === 1 ? 's' : ''} a category</b><br><span class="small mute">One tap each to file them</span></span><span class="link">Review ›</span></button>` : '';
-    return `${banner}${backupCard}<section class="card hero"><div class="label">Left this month</div>
+    return `${banner}${installCard}${backupCard}<section class="card hero"><div class="label">Left this month</div>
       <div class="big ${B.left < 0 ? 'over' : ''}">${money(B.left)}</div>${bar(pct)}
       <div class="sub"><span>${money(B.spent)} spent</span><span>of ${money(B.budget)}</span></div>
       <div class="sub">${incomeLine}</div>${hint ? `<div class="hint">${hint}</div>` : ''}${incomeHint}</section>
@@ -901,6 +914,11 @@ const actions = {
   fund: el => fundSheet(S.goals.find(g => g.id === el.dataset.id)),
   addrec: () => recSheet(null),
   rec: el => recSheet(S.recurring.find(r => r.id === el.dataset.id)),
+  recent: el => {
+    const f = el.closest('form'); f.elements.note.value = el.dataset.note; cap.picked = el.dataset.cat;
+    const r = f.querySelector(`input[name=cat][value="${el.dataset.cat}"]`); if (r) r.checked = true;
+    refreshCapture(); f.elements.amount.focus();
+  },
   pick: el => { cap.picked = cap.picked === el.dataset.id ? null : el.dataset.id; const r = document.querySelector(`#sheet input[name=cat][value="${cap.picked || ''}"]`); if (r) r.checked = true; refreshCapture(); },
   enableloc: () => { S.settings.locate = true; save(); startLocating(refreshCapture); refreshCapture(); },
   review: () => reviewSheet(),
@@ -917,6 +935,7 @@ const actions = {
   confirmall: () => { const list = L.autoUnconfirmed(S, L.todayStr()).slice(0, 12); autoChange(`Confirmed ${list.length}`, () => list.forEach(t => { delete t.auto; S.learn.stats.confirmed++; })); },
   diag: () => diagSheet(),
   addincome: () => txSheet(null, { type: 'income' }),
+  dismissinstall: () => { S.settings.installDismissed = true; save(); render(); },
   tobuffer: () => bufferSheet(),
   usebuffer: () => useBuffer(),
   lean: () => leanSheet(),

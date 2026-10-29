@@ -951,6 +951,7 @@ function applyTheme() {
   if (t === 'auto') document.documentElement.removeAttribute('data-theme'); else document.documentElement.dataset.theme = t;
 }
 function render() {
+  const pd = document.getElementById('places-details'); if (pd) ui.placesOpen = pd.open; // read the live state: the 'toggle' event arrives a moment late
   const monthTab = ['budget', 'activity', 'insights'].includes(ui.tab);
   $('top').hidden = !monthTab;
   $('month').textContent = periodLabel(ui.month);

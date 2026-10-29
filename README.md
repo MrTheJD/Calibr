@@ -10,6 +10,7 @@ A simple, private budgeting app. Set a monthly limit for each category, log what
 - **Fast entry** — one tap to add; category chips, remembered notes that auto-pick the category, Today/Yesterday shortcuts, and undo for every change.
 - **Activity** — everything this month grouped by day, with search and type/category filters. Tap to edit.
 - **Insights** — spending vs. last month, net, daily average, where the money went, a 6-month income/spending trend, and biggest expenses.
+- **Notices repeating purchases** — the same subscription or weekly purchase seen a few times is offered as a recurring bill in one tap.
 - **Recurring & bills** — weekly, bi-weekly, monthly or yearly; added automatically when due, with a "coming up" list.
 - **Goals** — savings goals with progress and the monthly amount needed to hit a target date.
 - **Your data** — stays on your device. Export/restore JSON backups, export CSV. 22 currencies, light/dark/auto theme, works offline, swipe between months.

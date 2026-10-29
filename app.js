@@ -745,12 +745,14 @@ const views = {
     const iosBrowser = /iPhone|iPad|iPod/.test(navigator.userAgent) && !navigator.standalone && !matchMedia('(display-mode: standalone)').matches;
     const installCard = iosBrowser && !S.settings.installDismissed ? `<div class="card autocard"><span class="emoji">📲</span><span class="grow"><b>Add Calibr to your Home Screen</b><br><span class="small mute">Tap the Share button, then “Add to Home Screen”. iPhone can clear a website's data after a week away, but not an app on your Home Screen.</span></span><button class="del" data-act="dismissinstall" aria-label="Dismiss">✕</button></div>` : '';
     const backupCard = L.backupDue(S, today) ? `<div class="card autocard"><span class="emoji">💾</span><span class="grow">Back up your data<br><span class="small mute">It only lives on this phone. Save a copy so you never lose it.</span></span><button class="btn primary" data-act="exportjson">Back up</button></div>` : '';
+    const sug = L.detectRecurring(S, today)[0];
+    const sugCard = sug ? `<div class="card autocard"><span class="emoji">🔁</span><span class="grow"><b>${esc(sug.note)}</b> repeats ${sug.freq === 'monthly' ? 'every month' : sug.freq === 'weekly' ? 'every week' : 'every two weeks'}<br><span class="small mute">${money(sug.amount)} each time, seen ${sug.count} times. Add it as a recurring bill and Calibr will log it for you.</span></span><div style="display:flex;flex-direction:column;gap:6px"><button class="btn primary" data-act="addsuggested" data-key="${esc(sug.key)}">Add</button><button class="link small" data-act="dismisssuggested" data-key="${esc(sug.key)}">Not now</button></div></div>` : '';
     const banner = nReview ? `<button class="card banner" data-act="review"><span class="emoji">📥</span><span class="grow"><b>${plural(nReview, 'purchase')} need${nReview === 1 ? 's' : ''} a category</b><br><span class="small mute">One tap each to file them</span></span><span class="link">Review ›</span></button>` : '';
     return `${banner}${installCard}${backupCard}<section class="card hero"><div class="label">Left this month</div>
       <div class="big ${B.left < 0 ? 'over' : ''}">${money(B.left)}</div>${bar(pct)}
       <div class="sub"><span>${money(B.spent)} spent</span><span>of ${money(B.budget)}</span></div>
       <div class="sub">${incomeLine}</div>${hint ? `<div class="hint">${hint}</div>` : ''}${incomeHint}</section>
-      ${autoCard}
+      ${autoCard}${sugCard}
       ${upcoming.length ? `<h2>Coming up <span class="mute" style="text-transform:none;letter-spacing:0">${(() => { const out = L.round2(upcoming.filter(r => r.type === 'expense').reduce((x, r) => x + r.amount, 0)), inn = L.round2(upcoming.filter(r => r.type === 'income').reduce((x, r) => x + r.amount, 0)); return [out ? `${money(out)} due` : '', inn ? `${money(inn)} expected` : ''].filter(Boolean).join(' · '); })()}</span></h2><ul class="list">${upcoming.map(r => {
         const d = L.daysBetween(today, r.next);
         return `<li><button class="rowbtn" data-act="rec" data-id="${r.id}"><div class="row"><span class="emoji">${r.type === 'income' ? '💵' : catOf(r.cat)?.emoji ?? '🔁'}</span><span class="grow"><div class="title">${esc(r.note)}</div><div class="small mute">${d === 1 ? 'Tomorrow' : `In ${plural(d, 'day')}`}</div></span><span class="amt ${r.type === 'income' ? 'inc' : ''}">${r.type === 'income' ? '+' : ''}${money(r.amount)}</span></div></button></li>`;
@@ -952,6 +954,11 @@ const actions = {
   diag: () => diagSheet(),
   addincome: () => txSheet(null, { type: 'income' }),
   dismissinstall: () => { S.settings.installDismissed = true; save(); render(); },
+  addsuggested: el => {
+    const d = L.detectRecurring(S, L.todayStr()).find(x => x.key === el.dataset.key); if (!d) return;
+    change(`${d.note} added as a recurring bill`, () => { S.recurring.push({ id: L.uid(), type: 'expense', amount: d.amount, cat: d.cat, note: d.note, freq: d.freq, next: d.next, anchor: d.anchor }); });
+  },
+  dismisssuggested: el => { S.settings.dismissedRecurring.push(el.dataset.key); save(); render(); },
   tobuffer: () => bufferSheet(),
   usebuffer: () => useBuffer(),
   lean: () => leanSheet(),

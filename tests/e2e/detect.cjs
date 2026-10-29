@@ -1,0 +1,32 @@
+const { chromium } = require('playwright');
+const assert = require('assert');
+const BASE = process.env.BASE || 'http://localhost:8124/';
+const pad = n => String(n).padStart(2, '0');
+const ago = n => { const d = new Date(); d.setDate(d.getDate() - n); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
+(async () => {
+  const b = await chromium.launch();
+  const c = await b.newContext({ viewport: { width: 390, height: 844 }, locale: 'en-US' });
+  const p = await c.newPage(); const errs = []; p.on('pageerror', e => errs.push(e.message));
+  const tx = (id, note, daysAgo, amount) => ({ id, type: 'expense', amount, cat: 'f', note, date: ago(daysAgo) });
+  await p.addInitScript(([txs]) => localStorage.getItem('calibr.v2') || localStorage.setItem('calibr.v2', JSON.stringify({ v: 2, settings: { onboarded: true, locate: false }, categories: [{ id: 'f', emoji: '🎉', name: 'Fun', limit: 100 }], transactions: txs })),
+    [[tx('a', 'Netflix', 91, 15.99), tx('b', 'Netflix', 61, 15.99), tx('c', 'Netflix', 30, 15.99), tx('d', 'Spotify', 70, 10), tx('e', 'Spotify', 40, 10), tx('f', 'Spotify', 10, 10)]]);
+  await p.goto(BASE); await p.waitForSelector('.hero');
+  const card = p.locator('.card:has-text("repeats every month")');
+  assert((await card.count()) === 1, 'one suggestion at a time');
+  const first = (await card.innerText());
+  assert(/Netflix|Spotify/.test(first) && first.includes('seen 3 times'), first);
+  await card.locator('[data-act=addsuggested]').click();
+  await p.click('[data-tab=settings]');
+  const recur = await p.locator('#view').innerText();
+  assert(/Monthly · next/.test(recur) && /Netflix|Spotify/.test(recur), recur.slice(0, 900));
+  await p.click('[data-tab=budget]');
+  const second = p.locator('.card:has-text("repeats every month")');
+  assert((await second.count()) === 1, 'the other one is offered next');
+  await second.locator('[data-act=dismisssuggested]').click();
+  assert((await p.locator('.card:has-text("repeats every month")').count()) === 0, 'dismissed for good');
+  await p.reload(); await p.waitForSelector('.hero');
+  assert((await p.locator('.card:has-text("repeats every month")').count()) === 0, 'stays dismissed');
+  console.log('  ✓ repeating purchases are offered as recurring bills; adding and dismissing work and persist');
+  assert.deepStrictEqual(errs, []);
+  await b.close(); console.log('DETECT OK');
+})().catch(e => { console.error('FAIL', e.message.split('\n')[0]); process.exit(1); });

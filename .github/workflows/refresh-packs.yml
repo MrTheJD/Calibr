@@ -1,0 +1,39 @@
+name: Refresh places packs
+
+# Overture Maps publishes new place data about monthly. This rebuilds the packs in packs/index.json when a newer
+# release exists, commits them to main and redeploys the site. Run it by hand from the Actions tab any time.
+
+on:
+  schedule:
+    - cron: '23 9 4 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install "duckdb==1.4.2"
+      - name: Rebuild packs that are out of date
+        run: python tools/refresh_packs.py
+      - name: Commit and redeploy
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -z "$(git status --porcelain packs)" ]; then echo "packs are current"; exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packs
+          git commit -m "Refresh places packs from the latest Overture release"
+          git push origin HEAD:main
+          # pushes made with GITHUB_TOKEN don't trigger other workflows, so start the deploy explicitly
+          gh workflow run pages.yml --ref main

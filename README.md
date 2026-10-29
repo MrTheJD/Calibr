@@ -43,6 +43,8 @@ pip install "duckdb==1.4.2"
 python tools/build_pack.py --name austin --place "Austin, Texas" --radius-km 6
 ```
 
+Packs refresh themselves: a monthly workflow (**Actions → Refresh places packs**, also runnable by hand) rebuilds every pack in `packs/index.json` when Overture has published a newer release, then redeploys.
+
 Typical size is 0.2–1.5 MB gzipped per city. The app picks the right pack from your location and caches it for offline use.
 
 ## Run locally

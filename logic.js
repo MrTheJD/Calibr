@@ -52,10 +52,23 @@ export const monthsBetween = (a, b) => {
 };
 export const daysLeftInMonth = today => daysInMonth(monthOf(today)) - Number(today.slice(8)) + 1;
 
+// ---- budget periods: a calendar month, or a month that starts on the user's payday (startDay 1-28) ----
+// A period is named after the month it starts in. With startDay 15, 2026-11-14 belongs to period 2026-10.
+export const periodOf = (s, date) => {
+  const sd = s.settings.startDay || 1;
+  return sd > 1 && Number(date.slice(8)) < sd ? addMonths(monthOf(date), -1) : monthOf(date);
+};
+export const periodBounds = (s, key) => {
+  const sd = s.settings.startDay || 1;
+  return { start: dateIn(key, sd), end: addDays(dateIn(addMonths(key, 1), sd), -1) };
+};
+export const periodLength = (s, key) => { const b = periodBounds(s, key); return daysBetween(b.start, b.end) + 1; };
+export const daysLeftInPeriod = (s, today) => daysBetween(today, periodBounds(s, periodOf(s, today)).end) + 1;
+
 // ---- state ----
 export const defaultState = () => ({
   v: 2,
-  settings: { currency: 'USD', income: 0, theme: 'auto', onboarded: false, lastCat: null, level: 'balanced', locate: true, lastAmount: 0, quickOpen: false, incomeMode: 'steady', planOverride: 0, moved: {}, lastBackup: '', installDismissed: false, dismissedRecurring: [] },
+  settings: { currency: 'USD', income: 0, theme: 'auto', onboarded: false, lastCat: null, level: 'balanced', locate: true, lastAmount: 0, quickOpen: false, incomeMode: 'steady', planOverride: 0, moved: {}, lastBackup: '', installDismissed: false, dismissedRecurring: [], startDay: 1 },
   categories: [],
   transactions: [],
   recurring: [],
@@ -94,6 +107,7 @@ export function sanitize(raw) {
     incomeMode: st.incomeMode === 'varies' ? 'varies' : 'steady',
     lastBackup: DATE.test(str(st.lastBackup)) ? st.lastBackup : '',
     installDismissed: !!st.installDismissed,
+    startDay: Number.isInteger(+st.startDay) && +st.startDay >= 1 && +st.startDay <= 28 ? +st.startDay : 1,
     dismissedRecurring: (Array.isArray(st.dismissedRecurring) ? st.dismissedRecurring : []).filter(x => typeof x === 'string').slice(-100),
     planOverride: Math.max(0, capMoney(round2(num(st.planOverride)))),
     moved: Object.fromEntries(Object.entries(st.moved && typeof st.moved === 'object' ? st.moved : {}).filter(([k, v]) => MONTH.test(k) && num(v) > 0).map(([k, v]) => [k, capMoney(round2(num(v)))])),
@@ -198,13 +212,13 @@ export function fromPresets(names, income) {
 // ---- budget math ----
 const catKey = (s, t) => (t.type === 'expense' && s.categories.some(c => c.id === t.cat) ? t.cat : '');
 
-export const monthTx = (s, key) => s.transactions.filter(t => t.date.startsWith(key));
+export const monthTx = (s, key) => s.transactions.filter(t => periodOf(s, t.date) === key);
 
 function indexSpending(s) {
   const idx = new Map();
   for (const t of s.transactions) {
     if (t.type !== 'expense') continue;
-    const k = `${monthOf(t.date)}|${catKey(s, t)}`;
+    const k = `${periodOf(s, t.date)}|${catKey(s, t)}`;
     idx.set(k, (idx.get(k) || 0) + t.amount);
   }
   return idx;

@@ -30,11 +30,18 @@ function save() {
   catch { if (!saveFailed) toast("Couldn't save — storage is full or blocked"); saveFailed = true; }
 }
 
-const ui = { tab: 'budget', month: L.monthOf(L.todayStr()), q: '', type: 'all', cat: 'all' };
+const periodNow = () => L.periodOf(S, L.todayStr());
+const ui = { tab: 'budget', month: periodNow(), q: '', type: 'all', cat: 'all' };
 
 const nfCache = {};
 const money = n => (nfCache[S.settings.currency] ??= new Intl.NumberFormat(undefined, { style: 'currency', currency: S.settings.currency })).format(n);
 const monthLabel = (key, opts = { month: 'long', year: 'numeric' }) => new Date(+key.slice(0, 4), +key.slice(5, 7) - 1, 1).toLocaleDateString(undefined, opts);
+// "October 2026", or "Oct 15 – Nov 14" when the month starts on payday.
+const periodLabel = (key, opts) => {
+  if (S.settings.startDay <= 1) return monthLabel(key, opts ?? { month: 'long', year: 'numeric' });
+  const b = L.periodBounds(S, key), f = d => parseDate(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return `${f(b.start)} – ${f(b.end)}`;
+};
 const parseDate = s => new Date(+s.slice(0, 4), +s.slice(5, 7) - 1, +s.slice(8, 10));
 const prettyDate = s => {
   const t = L.todayStr();
@@ -305,7 +312,7 @@ function txSheet(tx, preset = {}) {
     }
     let msg;
     if (t === 'income') {
-      const mk = date.slice(0, 7), plan = L.planIncome(S, mk);
+      const mk = L.periodOf(S, date), plan = L.planIncome(S, mk);
       msg = `Added ${money(amount)} income`;
       if (S.settings.incomeMode === 'varies' && plan > 0) { const got = L.budgetFor(S, mk).earned + amount; msg += got >= plan ? ` · ${money(got - plan)} above your plan` : ` · ${money(plan - got)} to reach your plan`; }
     }
@@ -319,7 +326,7 @@ function txSheet(tx, preset = {}) {
       else if (auto) fileTx(base, auto, true);
       if (t === 'expense') S.settings.lastAmount = amount;
     });
-    if (date.slice(0, 7) !== ui.month && ui.tab !== 'settings' && ui.tab !== 'goals') { ui.month = date.slice(0, 7); render(); }
+    if (L.periodOf(S, date) !== ui.month && ui.tab !== 'settings' && ui.tab !== 'goals') { ui.month = L.periodOf(S, date); render(); }
   },
   form => {
     const toggle = () => { const inc = form.elements.type.value === 'income'; $('catfield').hidden = inc; if ($('capture')) $('capture').hidden = inc; };
@@ -478,7 +485,7 @@ function bufferSheet() {
   }, form => setTimeout(() => { form.elements.amount.focus(); form.elements.amount.select(); }, 50));
 }
 function useBuffer() {
-  const buf = L.bufferGoal(S), today = L.todayStr(), IS = L.incomeStatus(S, L.monthOf(today));
+  const buf = L.bufferGoal(S), today = L.todayStr(), IS = L.incomeStatus(S, L.periodOf(S, today));
   const amt = buf ? Math.min(buf.saved, IS.gap) : 0;
   if (!(amt > 0)) return;
   change(`Moved ${money(amt)} from your buffer`, () => {
@@ -500,7 +507,7 @@ function leanSheet() {
       ${p.factor >= 1 ? '<p class="small good">✓ Your normal limits fit. Nothing to trim.</p>' : `<ul class="list" style="margin-top:8px">${p.suggestions.map(x => `<li><div class="rowbtn"><div class="row"><span class="emoji">${names[x.id].emoji}</span><span class="grow">${esc(names[x.id].name)}</span><span class="amt"><span class="mute">${money(x.from)} →</span> <b>${money(x.to)}</b></span></div></div></li>`).join('')}</ul>`}`;
   };
   openSheet(`<h3>Plan a lean month</h3>
-    <p class="mute small" style="margin:0">Essentials stay fully funded. Flexible categories shrink to fit what you can count on. This only changes ${monthLabel(key)}.</p>
+    <p class="mute small" style="margin:0">Essentials stay fully funded. Flexible categories shrink to fit what you can count on. This only changes ${periodLabel(key)}.</p>
     <div class="field"><label for="f-avail">Money I can count on this month</label><input id="f-avail" name="avail" type="number" inputmode="decimal" step="any" min="0" value="${start || ''}" required>
       <div class="quick"><button type="button" class="btn" data-act="setavail" data-v="${IS.earned}">Received so far</button><button type="button" class="btn" data-act="setavail" data-v="${IS.plan}">My plan</button></div></div>
     <div id="leanout">${out(start)}</div>
@@ -519,7 +526,7 @@ function leanSheet() {
 function monthLimitSheet(id) {
   const c = catOf(id); if (!c) return;
   const eff = L.limitFor(S, c, ui.month), adj = eff !== c.limit;
-  openSheet(`<h3>${c.emoji} ${esc(c.name)}: ${monthLabel(ui.month, { month: 'long' })} only</h3>
+  openSheet(`<h3>${c.emoji} ${esc(c.name)}: ${periodLabel(ui.month)} only</h3>
     <p class="mute small" style="margin:0">Your usual limit is ${money(c.limit)}. Change it just for this month.</p>
     <div class="field"><label for="f-limit">Limit this month</label><input id="f-limit" name="limit" type="number" inputmode="decimal" step="any" min="0" value="${eff}" required></div>
     <div class="actions">${adj ? '<button class="btn danger spacer" value="reset" formnovalidate>Use usual</button>' : '<button class="btn" value="cancel" formnovalidate>Cancel</button>'}<button class="btn primary" value="save">Save</button></div>`,
@@ -563,10 +570,10 @@ function catSheet(cat) {
     change(editing ? 'Category updated' : 'Category added', () => {
       if (editing) {
         Object.assign(cat, data);
-        if (rollover && !cat.since) cat.since = L.monthOf(L.todayStr());
+        if (rollover && !cat.since) cat.since = periodNow();
         if (!rollover) cat.since = undefined;
       } else {
-        S.categories.push({ id: L.uid(), ...data, since: rollover ? L.monthOf(L.todayStr()) : undefined });
+        S.categories.push({ id: L.uid(), ...data, since: rollover ? periodNow() : undefined });
       }
     });
   });
@@ -579,7 +586,7 @@ function catDetail(id) {
   const txs = L.monthTx(S, ui.month).filter(t => t.type === 'expense' && t.cat === id).sort((a, b) => b.date.localeCompare(a.date));
   openSheet(`
     <h3>${row.cat.emoji} ${esc(row.cat.name)}</h3>
-    <p class="mute" style="margin:0 0 10px">${monthLabel(ui.month)}</p>
+    <p class="mute" style="margin:0 0 10px">${periodLabel(ui.month)}</p>
     <div class="stats"><div class="stat"><div class="k">Left</div><div class="v ${row.left < 0 ? 'over' : ''}">${money(row.left)}</div></div>
       <div class="stat"><div class="k">Spent of ${money(row.avail)}${row.adjusted ? ' (adjusted)' : ''}</div><div class="v">${money(row.spent)}</div></div></div>
     ${row.carry > 0 ? `<p class="small mute">Includes ${money(row.carry)} carried over from earlier months.</p>` : ''}
@@ -706,7 +713,7 @@ function placesStatus() {
 
 const views = {
   budget() {
-    const today = L.todayStr(), cur = ui.month === L.monthOf(today);
+    const today = L.todayStr(), cur = ui.month === L.periodOf(S, today);
     if (!S.categories.length) {
       return `<div class="card empty"><span class="big">🧭</span><b>No categories yet</b><p>Categories are the buckets you budget into, like Groceries or Rent.</p>
         <button class="btn primary" data-act="addcat">Add a category</button> <button class="btn" data-act="onboard">Use a template</button></div>`;
@@ -715,7 +722,7 @@ const views = {
     const pct = B.budget ? (B.spent / B.budget) * 100 : B.spent ? 100 : 0;
     let hint = '';
     if (cur) {
-      const dl = L.daysLeftInMonth(today);
+      const dl = L.daysLeftInPeriod(S, today);
       hint = B.left > 0 ? `You can spend about <b>${money(B.left / dl)}</b> a day for the next ${plural(dl, 'day')}.`
         : B.left < 0 ? `You're <b class="over">${money(-B.left)}</b> over budget this month.` : 'Budget fully used — nice and exact.';
     }
@@ -781,9 +788,9 @@ const views = {
   },
 
   insights() {
-    const today = L.todayStr(), cur = ui.month === L.monthOf(today);
+    const today = L.todayStr(), cur = ui.month === L.periodOf(S, today);
     const B = L.budgetFor(S, ui.month);
-    const days = cur ? Number(today.slice(8)) : L.daysInMonth(ui.month);
+    const days = cur ? L.daysBetween(L.periodBounds(S, ui.month).start, today) + 1 : L.periodLength(S, ui.month);
     const prev = L.budgetFor(S, L.addMonths(ui.month, -1)).spent;
     const net = L.round2(B.income - B.spent);
     const rows = [...B.cats.map(r => ({ emoji: r.cat.emoji, name: r.cat.name, spent: r.spent })), { emoji: '❔', name: 'Uncategorized', spent: B.uncategorized }]
@@ -827,7 +834,7 @@ const views = {
       ${S.goals.length ? S.goals.map(g => {
         const pct = (g.saved / g.target) * 100, left = L.round2(g.target - g.saved);
         let note = '';
-        if (g.buffer) { const plan = L.planIncome(S, L.monthOf(today)); note = plan > 0 ? `Your cushion for lean months: about ${(g.saved / plan).toFixed(1)} months of your plan.` : 'Your cushion for lean months.'; }
+        if (g.buffer) { const plan = L.planIncome(S, L.periodOf(S, today)); note = plan > 0 ? `Your cushion for lean months: about ${(g.saved / plan).toFixed(1)} months of your plan.` : 'Your cushion for lean months.'; }
         else if (left <= 0) note = '🎉 Goal reached!';
         else if (g.date) {
           const m = L.monthsBetween(today, g.date);
@@ -847,6 +854,7 @@ const views = {
         <div class="setrow"><label for="s-income">${st.incomeMode === 'varies' ? 'Starting estimate (a low month)' : 'Monthly income'}</label><input id="s-income" data-bind="income" type="number" inputmode="decimal" step="any" min="0" value="${st.income || ''}" placeholder="0"></div>
         ${st.incomeMode === 'varies' ? `<div class="setrow"><label for="s-plan">Plan on (monthly)</label><input id="s-plan" data-bind="planOverride" type="number" inputmode="decimal" step="any" min="0" value="${st.planOverride || ''}" placeholder="${L.baselineIncome(S, ui.month) || 'auto'}"></div>
         <div class="setrow"><span class="mute small">${st.planOverride ? 'Using your number. Clear it to let Calibr choose.' : L.baselineIncome(S, ui.month) ? `Auto: ${money(L.baselineIncome(S, ui.month))}, the average of your lower recent months. It adjusts as you log income.` : 'Until you have two months of income logged, Calibr uses your starting estimate.'}</span></div>` : ''}
+        <div class="setrow"><label for="s-start">My budget month starts on</label><select id="s-start" data-bind="startDay">${Array.from({ length: 28 }, (_, i) => i + 1).map(d => `<option value="${d}" ${st.startDay === d ? 'selected' : ''}>${d === 1 ? '1st (calendar month)' : d + (d % 10 === 1 && d !== 11 ? 'st' : d % 10 === 2 && d !== 12 ? 'nd' : d % 10 === 3 && d !== 13 ? 'rd' : 'th')}</option>`).join('')}</select></div>
         <div class="setrow"><label for="s-cur">Currency</label><select id="s-cur" data-bind="currency">${L.CURRENCIES.map(([c, n]) => `<option value="${c}" ${c === st.currency ? 'selected' : ''}>${c} · ${n}</option>`).join('')}</select></div>
         <div class="setrow"><label for="s-theme">Appearance</label><select id="s-theme" data-bind="theme">${['auto', 'light', 'dark'].map(t => `<option value="${t}" ${st.theme === t ? 'selected' : ''}>${t[0].toUpperCase() + t.slice(1)}</option>`).join('')}</select></div></div>
       <h2>Smart capture</h2><div class="list">
@@ -904,11 +912,11 @@ function applyTheme() {
 function render() {
   const monthTab = ['budget', 'activity', 'insights'].includes(ui.tab);
   $('top').hidden = !monthTab;
-  $('month').textContent = monthLabel(ui.month);
+  $('month').textContent = periodLabel(ui.month);
   $('fab').hidden = !['budget', 'activity', 'insights'].includes(ui.tab);
   document.querySelectorAll('#nav button').forEach(b => { b.classList.toggle('on', b.dataset.tab === ui.tab); b.setAttribute('aria-current', b.dataset.tab === ui.tab ? 'page' : 'false'); });
   document.querySelector('#nav [data-tab=budget]').dataset.badge = L.reviewList(S).length || '';
-  $('view').innerHTML = (monthTab ? `<h1 class="vh">${{ budget: 'Budget', activity: 'Activity', insights: 'Insights' }[ui.tab]} for ${monthLabel(ui.month)}</h1>` : '') + views[ui.tab]();
+  $('view').innerHTML = (monthTab ? `<h1 class="vh">${{ budget: 'Budget', activity: 'Activity', insights: 'Insights' }[ui.tab]} for ${periodLabel(ui.month)}</h1>` : '') + views[ui.tab]();
   document.querySelectorAll('#view input[type=number]:not([max])').forEach(i => { i.max = L.MAX_MONEY; });
   applyTheme();
 }
@@ -927,7 +935,7 @@ const actions = {
   tab: el => { ui.tab = el.dataset.tab; render(); window.scrollTo(0, 0); },
   prev: () => shiftMonth(-1),
   next: () => shiftMonth(1),
-  thisMonth: () => { ui.month = L.monthOf(L.todayStr()); render(); },
+  thisMonth: () => { ui.month = periodNow(); render(); },
   add: () => txSheet(null),
   addto: el => { closeSheet(); txSheet(null, { cat: el.dataset.id }); },
   tx: el => { const t = S.transactions.find(x => x.id === el.dataset.id); if (t) { closeSheet(); txSheet(t); } },
@@ -1011,6 +1019,7 @@ document.addEventListener('change', ev => {
   if (bind === 'income') { S.settings.income = Math.min(L.MAX_MONEY, Math.max(0, L.round2(parseFloat(t.value) || 0))); save(); toast('Income saved'); }
   else if (bind === 'incomeMode') { S.settings.incomeMode = t.value; save(); render(); }
   else if (bind === 'planOverride') { S.settings.planOverride = Math.min(L.MAX_MONEY, Math.max(0, L.round2(parseFloat(t.value) || 0))); save(); render(); }
+  else if (bind === 'startDay') { S.settings.startDay = Math.min(28, Math.max(1, parseInt(t.value, 10) || 1)); ui.month = periodNow(); knownMonth = ui.month; save(); render(); toast(S.settings.startDay > 1 ? `Your budget month now runs from the ${t.options[t.selectedIndex].text}` : 'Back to calendar months'); }
   else if (bind === 'currency') { S.settings.currency = t.value; save(); render(); }
   else if (bind === 'locate') { S.settings.locate = t.checked; save(); }
   else if (bind === 'quickOpen') { S.settings.quickOpen = t.checked; save(); }
@@ -1037,9 +1046,9 @@ $('view').addEventListener('touchend', e => {
 window.addEventListener('storage', e => { if (e.key === KEY && e.newValue) { const s = L.sanitize(JSON.parse(e.newValue)); if (s) { S = s; render(); } } });
 
 // Roll the month forward / catch up recurring items when the app comes back to the foreground.
-let knownMonth = L.monthOf(L.todayStr());
+let knownMonth = periodNow();
 function refresh() {
-  const nowMonth = L.monthOf(L.todayStr());
+  const nowMonth = periodNow();
   if (nowMonth !== knownMonth) { if (ui.month === knownMonth) ui.month = nowMonth; knownMonth = nowMonth; render(); } // the app stayed open past midnight on the 1st
   const added = L.generateRecurring(S, L.todayStr());
   if (added) { save(); render(); toast(`Added ${plural(added, 'recurring transaction')}`); }

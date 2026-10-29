@@ -150,7 +150,10 @@ function openSheet(html, onSubmit, onMount, primary = 'save') {
   };
   form.querySelectorAll('input[type=number]:not([max])').forEach(i => { i.max = L.MAX_MONEY; });
   $('toast').hidden = true;
+  const title = form.querySelector('h3'); if (title) { title.id = 'sheet-title'; sheet.setAttribute('aria-labelledby', 'sheet-title'); } else sheet.removeAttribute('aria-labelledby');
   if (!sheet.open) sheet.showModal();
+  // Start on the first real field (not the close button), so typing or a screen reader begins in the right place.
+  if (document.activeElement?.matches('.sheetx, .vh')) form.querySelector('input:not(.vh):not([type=hidden]):not([type=radio]):not([type=checkbox]), select, textarea')?.focus({ preventScroll: true });
   onMount?.(form);
   return form;
 }

@@ -509,3 +509,21 @@ test('does not re-suggest what is already recurring or was dismissed', () => {
   s.recurring = []; s.transactions.forEach(t => { t.rec = 'x'; });
   assert.equal(L.detectRecurring(s, '2026-10-10').length, 0);
 });
+
+test('hostile backups cannot smuggle markup through ids or emoji', () => {
+  const evil = '"><img src=x onerror=alert(1)>';
+  const s = L.sanitize({
+    categories: [{ id: evil, emoji: '<b>', name: 'Food', limit: 5 }, { id: 'ok', emoji: '🛒👍', name: 'Groceries', limit: 5 }],
+    goals: [{ id: evil, emoji: '"', name: 'G', target: 10 }],
+    transactions: [{ id: evil, type: 'expense', amount: 5, cat: evil, date: '2026-10-01', status: 'review', sugg: [evil] }],
+    recurring: [{ id: evil, type: 'expense', amount: 5, cat: evil, note: 'r', freq: 'monthly', next: '2026-10-01' }],
+    settings: { lastCat: evil },
+  });
+  const safe = /^[A-Za-z0-9_-]+$/;
+  for (const x of [...s.categories, ...s.goals, ...s.transactions, ...s.recurring]) assert.match(x.id, safe);
+  assert.ok(s.categories.every(c => !/[<>&"'`]/.test(c.emoji) && [...new Intl.Segmenter().segment(c.emoji)].length === 1));
+  assert.equal(s.categories[0].emoji, '🏷️', 'markup emoji replaced by the default');
+  assert.equal(s.categories[1].emoji, '🛒', 'only the first glyph is kept');
+  assert.equal(s.transactions[0].cat, s.categories[0].id, 'references follow the cleaned id');
+  assert.match(s.settings.lastCat ?? 'x', safe);
+});

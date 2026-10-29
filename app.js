@@ -861,7 +861,6 @@ const views = {
         <div class="setrow"><span>Export spreadsheet (CSV)</span><button class="link" data-act="exportcsv">Export</button></div>
         <div class="setrow"><span>Restore from backup</span><button class="link" data-act="import">Choose file</button></div>
         <div class="setrow"><span>Erase everything</span><button class="link over" data-act="reset">Erase…</button></div></div>
-      <input id="file" type="file" accept="application/json,.json" hidden>
       <p class="mute small" style="margin:16px 4px">Calibr ${VERSION}. Your data lives only in this browser on this device — nothing is uploaded. Export a backup now and then, especially before clearing browser data or switching phones.</p>
       ${packs.entry ? '<p class="mute small" style="margin:8px 4px">Places data © Overture Maps Foundation and its sources (CDLA-Permissive-2.0, Apache-2.0, CC0-1.0).</p>' : ''}`;
   },

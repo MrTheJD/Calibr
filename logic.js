@@ -68,7 +68,7 @@ export const daysLeftInPeriod = (s, today) => daysBetween(today, periodBounds(s,
 // ---- state ----
 export const defaultState = () => ({
   v: 2,
-  settings: { currency: 'USD', income: 0, theme: 'auto', onboarded: false, lastCat: null, level: 'balanced', locate: true, lastAmount: 0, quickOpen: false, incomeMode: 'steady', planOverride: 0, moved: {}, lastBackup: '', installDismissed: false, dismissedRecurring: [], startDay: 1 },
+  settings: { currency: 'USD', income: 0, theme: 'auto', onboarded: false, lastCat: null, level: 'balanced', locate: true, lastAmount: 0, quickOpen: false, incomeMode: 'steady', planOverride: 0, moved: {}, lastBackup: '', installDismissed: false, dismissedRecurring: [], startDay: 1, seenVersion: '' },
   categories: [],
   transactions: [],
   recurring: [],
@@ -107,6 +107,7 @@ export function sanitize(raw) {
     incomeMode: st.incomeMode === 'varies' ? 'varies' : 'steady',
     lastBackup: DATE.test(str(st.lastBackup)) ? st.lastBackup : '',
     installDismissed: !!st.installDismissed,
+    seenVersion: /^[0-9.]{1,12}$/.test(str(st.seenVersion)) ? st.seenVersion : '',
     startDay: Number.isInteger(+st.startDay) && +st.startDay >= 1 && +st.startDay <= 28 ? +st.startDay : 1,
     dismissedRecurring: (Array.isArray(st.dismissedRecurring) ? st.dismissedRecurring : []).filter(x => typeof x === 'string').slice(-100),
     planOverride: Math.max(0, capMoney(round2(num(st.planOverride)))),

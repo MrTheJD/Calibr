@@ -604,3 +604,17 @@ test('rollover and baseline income follow periods too', () => {
 test('startDay is validated', () => {
   for (const [input, want] of [[15, 15], ['20', 20], [0, 1], [29, 1], [-3, 1], [2.5, 1], ['x', 1], [undefined, 1]]) assert.equal(L.sanitize({ settings: { startDay: input } }).settings.startDay, want, String(input));
 });
+
+test('limits are suggested from income only for categories that have none', () => {
+  const s = state();
+  s.categories.forEach(c => { c.limit = 0; });
+  s.categories.find(c => c.name === 'Fun').limit = 77; // already set: left alone
+  s.categories.push({ id: 'x', emoji: '🥑', name: 'Avocado fund', limit: 0 }); // no matching preset
+  s.categories.push({ id: 'k', emoji: '🥖', name: 'Bread', limit: 0, kind: 'grocery' }); // matched by kind
+  const out = Object.fromEntries(L.suggestLimits(s, 3000).map(x => [x.id, x.limit]));
+  assert.equal(out[cat(s, 'Groceries')], 360);
+  assert.equal(out[cat(s, 'Eating out')], 180);
+  assert.equal(out.k, 360, 'matched through its kind');
+  assert.ok(!(cat(s, 'Fun') in out) && !('x' in out));
+  assert.deepEqual(L.suggestLimits(s, 0), []);
+});

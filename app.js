@@ -1,6 +1,9 @@
 import * as L from './logic.js';
 
-const KEY = 'calibr.v2', OLD = 'calibr.v1', VERSION = '1.3.0';
+const CHANGELOG = {
+  '1.4.0': ['Log a purchase by location: Calibr suggests the category and files the sure ones by itself', 'Fluctuating pay: it plans on your lower months, with an income buffer and a lean-month planner', 'Your budget month can start on payday (Settings)', 'Repeating purchases are offered as recurring bills', 'Settings → Test location shows what Calibr sees if something seems off'],
+};
+const KEY = 'calibr.v2', OLD = 'calibr.v1', VERSION = '1.4.0';
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
@@ -71,12 +74,21 @@ function toast(msg, undo) {
   toastTimer = setTimeout(() => (t.hidden = true), undo ? 6000 : 3000);
 }
 // Run a change and offer to put things back.
+// An undo is only safe while nothing else has changed since: otherwise it would silently revert those changes too.
+function undoer(before) {
+  const after = JSON.stringify(S);
+  return () => {
+    if (JSON.stringify(S) !== after) return false;
+    S = L.sanitize(JSON.parse(before)); save(); render(); return true;
+  };
+}
 function change(msg, fn) {
   const before = JSON.stringify(S);
   fn();
   save();
   render();
-  toast(msg, () => { S = L.sanitize(JSON.parse(before)); save(); render(); });
+  const undo = undoer(before);
+  toast(msg, () => { if (!undo()) toast("Can't undo: something else has changed since."); });
 }
 
 // ---------- location & places ----------
@@ -416,7 +428,7 @@ function reviewSheet(note) {
 function reviewChange(msg, fn) {
   const before = JSON.stringify(S);
   fn(); save(); render();
-  rvUndo = () => { S = L.sanitize(JSON.parse(before)); save(); render(); };
+  rvUndo = undoer(before);
   reviewSheet(msg);
 }
 
@@ -434,7 +446,7 @@ function autoSheet(note) {
 function autoChange(msg, fn) {
   const before = JSON.stringify(S);
   fn(); save(); render();
-  rvUndo = () => { S = L.sanitize(JSON.parse(before)); save(); render(); };
+  rvUndo = undoer(before);
   autoSheet(msg);
 }
 
@@ -706,7 +718,7 @@ function onboardSheet() {
     <div class="field"><label class="check"><input type="checkbox" name="locate" checked><span>Use my location to suggest categories<br><span class="mute small">Only while you're adding a purchase. Never leaves your device.</span></span></label></div>
     <div class="actions"><button class="btn" value="skip" formnovalidate>Skip</button><button class="btn primary" value="go">Get started</button></div>`,
   (v, fd) => {
-    S.settings.onboarded = true;
+    S.settings.onboarded = true; S.settings.seenVersion = VERSION;
     if (v === 'go') {
       const income = Math.max(0, L.round2(parseFloat(fd.get('income')) || 0));
       S.settings.currency = fd.get('currency');
@@ -719,7 +731,7 @@ function onboardSheet() {
     save(); render();
   }, null, 'go');
 }
-sheet.addEventListener('close', () => { if (!S.settings.onboarded && sheet.querySelector('[name=cats]')) { S.settings.onboarded = true; save(); render(); } });
+sheet.addEventListener('close', () => { if (!S.settings.onboarded && sheet.querySelector('[name=cats]')) { S.settings.onboarded = true; S.settings.seenVersion = VERSION; save(); render(); } });
 
 // ---------- views ----------
 // Where to run the "Build places pack" workflow, when the app is served from GitHub Pages.
@@ -776,13 +788,15 @@ const views = {
     const autoCard = nAuto ? `<button class="card autocard" data-act="autoreview"><span class="emoji">📍</span><span class="grow">${plural(nAuto, 'purchase')} filed automatically<br><span class="small mute">Glance over ${nAuto === 1 ? 'it' : 'them'} so Calibr learns what it got right</span></span><span class="link">Check ›</span></button>` : '';
     const iosBrowser = /iPhone|iPad|iPod/.test(navigator.userAgent) && !navigator.standalone && !matchMedia('(display-mode: standalone)').matches;
     const installCard = iosBrowser && !S.settings.installDismissed ? `<div class="card autocard"><span class="emoji">📲</span><span class="grow"><b>Add Calibr to your Home Screen</b><br><span class="small mute">Tap the Share button, then “Add to Home Screen”. iPhone can clear a website's data after a week away, but not an app on your Home Screen.</span></span><button class="del" data-act="dismissinstall" aria-label="Dismiss">✕</button></div>` : '';
+    const news = CHANGELOG[VERSION];
+    const newsCard = news && S.settings.onboarded && S.settings.seenVersion !== VERSION ? `<div class="card"><div class="row"><b>What's new in Calibr ${VERSION}</b><button class="del" data-act="dismissnews" aria-label="Dismiss">✕</button></div><ul style="margin:8px 0 0;padding-left:18px" class="small">${news.map(n => `<li>${esc(n)}</li>`).join('')}</ul></div>` : '';
     const backupCard = L.backupDue(S, today) ? `<div class="card autocard"><span class="emoji">💾</span><span class="grow">Back up your data<br><span class="small mute">It only lives on this phone. Save a copy so you never lose it.</span></span><button class="btn primary" data-act="exportjson">Back up</button></div>` : '';
     const noLimits = B.limits === 0 && B.budget === 0;
     const limitsCard = noLimits ? `<div class="card autocard"><span class="emoji">🎯</span><span class="grow"><b>Set your monthly limits</b><br><span class="small mute">Tap a category to choose how much to spend on it, or let Calibr suggest limits from your income.</span></span><button class="btn primary" data-act="suggestlimits">Suggest</button></div>` : '';
     const sug = L.detectRecurring(S, today)[0];
     const sugCard = sug ? `<div class="card autocard"><span class="emoji">🔁</span><span class="grow"><b>${esc(sug.note)}</b> repeats ${sug.freq === 'monthly' ? 'every month' : sug.freq === 'weekly' ? 'every week' : 'every two weeks'}<br><span class="small mute">${money(sug.amount)} each time, seen ${sug.count} times. Add it as a recurring bill and Calibr will log it for you.</span></span><div style="display:flex;flex-direction:column;gap:6px"><button class="btn primary" data-act="addsuggested" data-key="${esc(sug.key)}">Add</button><button class="link small" data-act="dismisssuggested" data-key="${esc(sug.key)}">Not now</button></div></div>` : '';
     const banner = nReview ? `<button class="card banner" data-act="review"><span class="emoji">📥</span><span class="grow"><b>${plural(nReview, 'purchase')} need${nReview === 1 ? 's' : ''} a category</b><br><span class="small mute">One tap each to file them</span></span><span class="link">Review ›</span></button>` : '';
-    return `${banner}${limitsCard}${installCard}${backupCard}<section class="card hero"><div class="label">Left this month</div>
+    return `${banner}${newsCard}${limitsCard}${installCard}${backupCard}<section class="card hero"><div class="label">Left this month</div>
       <div class="big ${B.left < 0 ? 'over' : ''}">${money(B.left)}</div>${bar(pct)}
       <div class="sub"><span>${money(B.spent)} spent</span><span>of ${money(B.budget)}</span></div>
       <div class="sub">${incomeLine}</div>${hint ? `<div class="hint">${hint}</div>` : ''}${incomeHint}</section>
@@ -994,6 +1008,7 @@ const actions = {
   confirmall: () => { const list = L.autoUnconfirmed(S, L.todayStr()).slice(0, 12); autoChange(`Confirmed ${list.length}`, () => list.forEach(t => { delete t.auto; S.learn.stats.confirmed++; })); },
   diag: () => diagSheet(),
   addincome: () => txSheet(null, { type: 'income' }),
+  dismissnews: () => { S.settings.seenVersion = VERSION; save(); render(); },
   dismissinstall: () => { S.settings.installDismissed = true; save(); render(); },
   addsuggested: el => {
     const d = L.detectRecurring(S, L.todayStr()).find(x => x.key === el.dataset.key); if (!d) return;
@@ -1007,8 +1022,8 @@ const actions = {
   setavail: el => { const i = document.querySelector('#sheet [name=avail]'); i.value = el.dataset.v; i.dispatchEvent(new Event('input', { bubbles: true })); },
   monthlimit: el => { closeSheet(); monthLimitSheet(el.dataset.id); },
   setvaries: () => { S.settings.incomeMode = 'varies'; save(); render(); toast('Now planning around your lower months'); },
-  rvundo2: () => { const u = rvUndo; rvUndo = null; u?.(); autoSheet('Undone'); },
-  rvundo: () => { const u = rvUndo; rvUndo = null; u?.(); reviewSheet('Undone'); },
+  rvundo2: () => { const u = rvUndo; rvUndo = null; const ok = u?.(); autoSheet(ok === false ? "Can't undo: something else has changed since." : 'Undone'); },
+  rvundo: () => { const u = rvUndo; rvUndo = null; const ok = u?.(); reviewSheet(ok === false ? "Can't undo: something else has changed since." : 'Undone'); },
   forget: () => {
     if (!confirm('Forget every place Calibr has learned, and remove the approximate location saved with each purchase? Your purchases and their categories are kept.')) return;
     change('Learning reset', () => { S.learn = { merchants: {}, spots: [], stats: S.learn.stats }; S.transactions.forEach(t => { delete t.loc; delete t.mkey; }); });

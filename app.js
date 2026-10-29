@@ -1,6 +1,6 @@
 import * as L from './logic.js';
 
-const KEY = 'calibr.v2', OLD = 'calibr.v1', VERSION = '1.2.0';
+const KEY = 'calibr.v2', OLD = 'calibr.v1', VERSION = '1.3.0';
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
@@ -168,10 +168,13 @@ const dateField = (value, name = 'date', label = 'Date') => `<div class="field">
 const cap = { picked: null, res: null };
 function captureHTML() {
   cap.amount = parseFloat(document.querySelector('#sheet [name=amount]')?.value) || 0;
-  const res = cap.res = L.suggest(S, geo.fix, packs.index, cap.amount, new Date().getHours());
-  const fix = geo.fix;
+  const dateVal = document.querySelector('#sheet [name=date]')?.value;
+  cap.past = !!dateVal && dateVal !== L.todayStr(); // the phone's position says nothing about a purchase made on another day
+  const fix = cap.past ? null : geo.fix;
+  const res = cap.res = L.suggest(S, fix, packs.index, cap.amount, new Date().getHours());
   let line;
-  if (geo.state === 'off') line = '📍 Location is off. <button type="button" class="link" data-act="enableloc">Turn on</button>';
+  if (cap.past) line = '🗓 A purchase from another day, so your location isn’t used.';
+  else if (geo.state === 'off') line = '📍 Location is off. <button type="button" class="link" data-act="enableloc">Turn on</button>';
   else if (geo.state === 'denied') line = '📍 Location is blocked. Allow it in your browser settings to get suggestions.';
   else if (geo.state === 'unavailable') line = '📍 Couldn’t get your location.';
   else if (!fix) line = '📍 Finding your location…';
@@ -189,6 +192,7 @@ function captureHTML() {
   else if (!S.categories.length) hint = '';
   else if (decision === 'auto') hint = `<span class="good">✓ Will be filed under <b>${esc(catOf(top.catId).name)}</b> automatically</span>`;
   else if (fix && res.place && top && top.p >= 0.4 && res.margin >= 0.15 && (S.learn.merchants[res.place.key]?.n || 0) < 3) hint = `<span class="warn">New here? Tap <b>${esc(catOf(top.catId).name)}</b> if that's right. After a few visits Calibr will file it by itself.</span>`;
+  else if (cap.past) hint = '<span class="warn">Pick a category, or save it and sort it out later.</span>';
   else if (fix || geo.state === 'off' || geo.state === 'denied') hint = '<span class="warn">Not sure enough to file this by itself — tap a category, or save it and pick later.</span>';
   const chips = res.ranked.map(r => { const c = catOf(r.catId); return c ? `<button type="button" class="chipbtn ${cap.picked === c.id ? 'on' : ''}" data-act="pick" data-id="${c.id}">${c.emoji} ${esc(c.name)}${r.p >= 0.3 ? ` <span class="pct">${Math.round(r.p * 100)}%</span>` : ''}</button>` : ''; }).join('');
   // With no place to go on, offer the things you log most often: one tap fills the note and category.
@@ -274,7 +278,7 @@ function txSheet(tx, preset = {}) {
     }
 
     // Saved before the first GPS fix arrived? Give it a moment, so the purchase keeps its place.
-    if (t === 'expense' && S.settings.locate && geo.state === 'locating' && !geo.fix && !cap.waited) {
+    if (t === 'expense' && date === L.todayStr() && S.settings.locate && geo.state === 'locating' && !geo.fix && !cap.waited) {
       cap.waited = true;
       const form = $('sheet').firstElementChild, btn = form.querySelector('.actions .primary');
       const label = btn.textContent; btn.textContent = 'Locating…'; btn.disabled = true;
@@ -287,8 +291,9 @@ function txSheet(tx, preset = {}) {
     }
 
     // New transaction: decide whether it can be filed by itself.
-    const fix = geo.fix && t === 'expense' ? geo.fix : null;
-    const res = L.suggest(S, geo.fix, packs.index, amount, new Date().getHours()); // recompute with the final amount
+    const useLoc = date === L.todayStr(); // location only describes today's purchases
+    const fix = geo.fix && t === 'expense' && useLoc ? geo.fix : null;
+    const res = L.suggest(S, useLoc ? geo.fix : null, packs.index, amount, new Date().getHours()); // recompute with the final amount
     const place = res?.place && res.place.p >= 0.35 ? { key: res.place.key, name: res.place.name } : null;
     const base = { id: L.uid(), type: t, amount, cat: null, note, date };
     if (t === 'expense' && fix && fix.acc <= 150) {
@@ -316,7 +321,7 @@ function txSheet(tx, preset = {}) {
   },
   form => {
     const toggle = () => { const inc = form.elements.type.value === 'income'; $('catfield').hidden = inc; if ($('capture')) $('capture').hidden = inc; };
-    form.addEventListener('change', e => { if (e.target.name === 'type') toggle(); if (e.target.name === 'cat') { cap.picked = e.target.value || null; if ($('capture')) refreshCapture(); } });
+    form.addEventListener('change', e => { if (e.target.name === 'date' && $('capture')) refreshCapture(); if (e.target.name === 'type') toggle(); if (e.target.name === 'cat') { cap.picked = e.target.value || null; if ($('capture')) refreshCapture(); } });
     toggle();
     const amt = form.elements.amount;
     let tm;
@@ -1017,7 +1022,10 @@ $('view').addEventListener('touchend', e => {
 window.addEventListener('storage', e => { if (e.key === KEY && e.newValue) { const s = L.sanitize(JSON.parse(e.newValue)); if (s) { S = s; render(); } } });
 
 // Roll the month forward / catch up recurring items when the app comes back to the foreground.
+let knownMonth = L.monthOf(L.todayStr());
 function refresh() {
+  const nowMonth = L.monthOf(L.todayStr());
+  if (nowMonth !== knownMonth) { if (ui.month === knownMonth) ui.month = nowMonth; knownMonth = nowMonth; render(); } // the app stayed open past midnight on the 1st
   const added = L.generateRecurring(S, L.todayStr());
   if (added) { save(); render(); toast(`Added ${plural(added, 'recurring transaction')}`); }
 }

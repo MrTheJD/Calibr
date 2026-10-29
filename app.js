@@ -688,8 +688,9 @@ const views = {
       const buf = L.bufferGoal(S);
       const eTot = L.round2(S.categories.filter(c => c.essential).reduce((sum, c) => sum + L.limitFor(S, c, ui.month), 0));
       if (eTot > 0) { const short = L.round2(eTot - IS.earned - IS.drawn); incomeLine += `</div><div class="sub"><span>Essentials ${money(eTot)}</span><span class="${short > 0 ? 'warn' : 'good'}">${short > 0 ? `${money(short)} still to cover` : '✓ covered'}</span>`; }
-      if (inc > 0 && IS.surplus > 0) incomeHint = `<div class="hint">💰 <b>${money(IS.surplus)}</b> above your plan. <button class="link" data-act="tobuffer">Save it in your buffer</button></div>`;
-      else if (inc > 0 && IS.gap > 0) incomeHint = `<div class="hint">${money(IS.gap)} to go to reach your plan.${cur ? ` <button class="link" data-act="lean">Plan a lean month</button>` : ''}${cur && buf?.saved > 0 ? ` <button class="link" data-act="usebuffer">Use buffer</button>` : ''}</div>`;
+      incomeHint = `<div class="small" style="margin-top:8px"><button class="link" data-act="addincome">+ Log a paycheck</button></div>`;
+      if (inc > 0 && IS.surplus > 0) incomeHint += `<div class="hint">💰 <b>${money(IS.surplus)}</b> above your plan. <button class="link" data-act="tobuffer">Save it in your buffer</button></div>`;
+      else if (inc > 0 && IS.gap > 0) incomeHint += `<div class="hint">${money(IS.gap)} to go to reach your plan.${cur ? ` <button class="link" data-act="lean">Plan a lean month</button>` : ''}${cur && buf?.saved > 0 ? ` <button class="link" data-act="usebuffer">Use buffer</button>` : ''}</div>`;
     } else {
       incomeLine = inc > 0
         ? `<span>Income ${money(inc)}</span>${unassignedTxt}`
@@ -699,8 +700,9 @@ const views = {
     const nReview = L.reviewList(S).length;
     const nAuto = L.autoUnconfirmed(S, today).length;
     const autoCard = nAuto ? `<button class="card autocard" data-act="autoreview"><span class="emoji">📍</span><span class="grow">${plural(nAuto, 'purchase')} filed automatically<br><span class="small mute">Glance over ${nAuto === 1 ? 'it' : 'them'} so Calibr learns what it got right</span></span><span class="link">Check ›</span></button>` : '';
+    const backupCard = L.backupDue(S, today) ? `<div class="card autocard"><span class="emoji">💾</span><span class="grow">Back up your data<br><span class="small mute">It only lives on this phone. Save a copy so you never lose it.</span></span><button class="btn primary" data-act="exportjson">Back up</button></div>` : '';
     const banner = nReview ? `<button class="card banner" data-act="review"><span class="emoji">📥</span><span class="grow"><b>${plural(nReview, 'purchase')} need${nReview === 1 ? 's' : ''} a category</b><br><span class="small mute">One tap each to file them</span></span><span class="link">Review ›</span></button>` : '';
-    return `${banner}<section class="card hero"><div class="label">Left this month</div>
+    return `${banner}${backupCard}<section class="card hero"><div class="label">Left this month</div>
       <div class="big ${B.left < 0 ? 'over' : ''}">${money(B.left)}</div>${bar(pct)}
       <div class="sub"><span>${money(B.spent)} spent</span><span>of ${money(B.budget)}</span></div>
       <div class="sub">${incomeLine}</div>${hint ? `<div class="hint">${hint}</div>` : ''}${incomeHint}</section>
@@ -899,6 +901,7 @@ const actions = {
   confirm: el => { const t = S.transactions.find(x => x.id === el.dataset.id); if (t) autoChange('Confirmed', () => { delete t.auto; S.learn.stats.confirmed++; }); },
   confirmall: () => { const list = L.autoUnconfirmed(S, L.todayStr()).slice(0, 12); autoChange(`Confirmed ${list.length}`, () => list.forEach(t => { delete t.auto; S.learn.stats.confirmed++; })); },
   diag: () => diagSheet(),
+  addincome: () => txSheet(null, { type: 'income' }),
   tobuffer: () => bufferSheet(),
   usebuffer: () => useBuffer(),
   lean: () => leanSheet(),
@@ -914,7 +917,7 @@ const actions = {
   emoji: el => { el.closest('form').elements.emoji.value = el.dataset.e; },
   setdate: el => { const i = el.closest('.datepick').querySelector('input[type=date]'); i.value = L.addDays(L.todayStr(), +el.dataset.d); i.dispatchEvent(new Event('change', { bubbles: true })); },
   undo: () => { $('toast').hidden = true; toast.undo?.(); toast.undo = null; },
-  exportjson: () => download(`calibr-backup-${stamp()}.json`, 'application/json', JSON.stringify(S, null, 2)),
+  exportjson: () => { S.settings.lastBackup = L.todayStr(); save(); download(`calibr-backup-${stamp()}.json`, 'application/json', JSON.stringify(S, null, 2)); render(); toast('Backup saved to your downloads'); },
   exportcsv: () => download(`calibr-transactions-${stamp()}.csv`, 'text/csv', L.toCSV(S)),
   import: () => $('file').click(),
   reset: () => {

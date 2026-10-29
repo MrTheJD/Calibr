@@ -425,3 +425,14 @@ test('well-known fuel brands filed as convenience stores are treated as fuel sto
   const r = L.suggest(s, fix(), idx);
   assert.equal(r.ranked[0].catId, cat(s, 'Gas'));
 });
+
+test('backup reminder appears only when there is data worth protecting and no recent backup', () => {
+  const s = state();
+  assert.equal(L.backupDue(s, '2026-10-28'), false, 'little data');
+  s.transactions = Array.from({ length: 40 }, (_, i) => tx('2026-10-01', 5 + i, null));
+  assert.equal(L.backupDue(s, '2026-10-28'), true, 'never backed up');
+  s.settings.lastBackup = '2026-10-10';
+  assert.equal(L.backupDue(s, '2026-10-28'), false);
+  assert.equal(L.backupDue(s, '2026-11-15'), true);
+  assert.equal(L.sanitize(JSON.parse(JSON.stringify(s))).settings.lastBackup, '2026-10-10');
+});

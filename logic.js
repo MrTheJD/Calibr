@@ -53,7 +53,7 @@ export const daysLeftInMonth = today => daysInMonth(monthOf(today)) - Number(tod
 // ---- state ----
 export const defaultState = () => ({
   v: 2,
-  settings: { currency: 'USD', income: 0, theme: 'auto', onboarded: false, lastCat: null, level: 'balanced', locate: true, lastAmount: 0, quickOpen: false, incomeMode: 'steady', planOverride: 0, moved: {} },
+  settings: { currency: 'USD', income: 0, theme: 'auto', onboarded: false, lastCat: null, level: 'balanced', locate: true, lastAmount: 0, quickOpen: false, incomeMode: 'steady', planOverride: 0, moved: {}, lastBackup: '' },
   categories: [],
   transactions: [],
   recurring: [],
@@ -86,6 +86,7 @@ export function sanitize(raw) {
     lastAmount: Math.max(0, round2(num(st.lastAmount))),
     quickOpen: !!st.quickOpen,
     incomeMode: st.incomeMode === 'varies' ? 'varies' : 'steady',
+    lastBackup: DATE.test(str(st.lastBackup)) ? st.lastBackup : '',
     planOverride: Math.max(0, round2(num(st.planOverride))),
     moved: Object.fromEntries(Object.entries(st.moved && typeof st.moved === 'object' ? st.moved : {}).filter(([k, v]) => MONTH.test(k) && num(v) > 0).map(([k, v]) => [k, round2(num(v))])),
   };
@@ -557,4 +558,11 @@ export function leanPlan(s, key, available) {
   const factor = fTot > 0 ? Math.min(1, Math.max(0, room / fTot)) : 1;
   const suggestions = flex.filter(c => eff(c) > 0).map(c => ({ id: c.id, from: eff(c), to: factor >= 1 ? eff(c) : Math.floor((eff(c) * factor) / 5) * 5 }));
   return { available, eTot, fTot, room, factor, shortfall: Math.max(0, -room), suggestions };
+}
+
+/** True when there is enough data worth protecting and no recent backup. */
+export function backupDue(s, today, days = 30) {
+  if (s.transactions.length < 30) return false;
+  const last = s.settings.lastBackup;
+  return !last || daysBetween(last, today) >= days;
 }
